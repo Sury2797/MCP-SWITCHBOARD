@@ -1,0 +1,8 @@
+node_modules/
+sidecar/node_modules/
+dist/
+src-tauri/target/
+.DS_Store
+*.log
+updater-key
+
