@@ -162,10 +162,6 @@ tunnelManager.on('state', () => {
   broadcastUiEvent('state', buildFullState());
 });
 
-tunnelManager.on('log', (entry) => {
-  broadcastUiEvent('tunnelLog', entry);
-});
-
 // ============================================================================
 // 1. Streamable HTTP MCP Endpoint (/mcp) & Health Check (/health)
 // ============================================================================
@@ -394,10 +390,6 @@ app.post('/api/tunnel/start', async (_req, res) => {
 app.post('/api/tunnel/stop', async (_req, res) => {
   const tunnel = await tunnelManager.stop();
   res.json({ ok: true, tunnel, state: buildFullState() });
-});
-
-app.get('/api/tunnel/logs', (_req, res) => {
-  res.json({ logs: tunnelManager.getLogs() });
 });
 
 app.patch('/api/settings', (req, res) => {

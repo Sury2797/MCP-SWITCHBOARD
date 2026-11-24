@@ -101,10 +101,6 @@ export async function discoverSidecarBaseUrl({
   throw new Error('Unable to connect to MCP Switchboard engine. The background process did not respond in time.');
 }
 
-export function getSidecarBaseUrl(): string {
-  return baseUrl;
-}
-
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const customHeaders =
     options.headers && !(options.headers instanceof Headers) && !Array.isArray(options.headers)
@@ -165,7 +161,6 @@ export const api = {
     request<{ ok: boolean; tunnel: TunnelState; state: AppState }>('/api/tunnel/stop', {
       method: 'POST',
     }),
-  getTunnelLogs: () => request<{ logs: LogEntry[] }>('/api/tunnel/logs'),
   updateSettings: (patch: Partial<SwitchboardSettings>) =>
     request<{ ok: boolean; settings: SwitchboardSettings; state: AppState }>('/api/settings', {
       method: 'PATCH',
@@ -177,14 +172,12 @@ export const api = {
 export interface SseSubscriptionHandlers {
   onState?: (nextState: AppState) => void;
   onLog?: (payload: LiveLogEvent) => void;
-  onTunnelLog?: (entry: LogEntry) => void;
   onError?: () => void;
 }
 
 export function subscribeEvents({
   onState,
   onLog,
-  onTunnelLog,
   onError,
 }: SseSubscriptionHandlers): () => void {
   const sseUrl = controlToken
@@ -199,11 +192,6 @@ export function subscribeEvents({
   es.addEventListener('log', (e) => {
     try {
       onLog?.(JSON.parse((e as MessageEvent<string>).data) as LiveLogEvent);
-    } catch {}
-  });
-  es.addEventListener('tunnelLog', (e) => {
-    try {
-      onTunnelLog?.(JSON.parse((e as MessageEvent<string>).data) as LogEntry);
     } catch {}
   });
   es.onerror = () => {

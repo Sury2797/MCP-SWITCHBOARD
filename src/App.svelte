@@ -132,7 +132,7 @@
 
     const updateTimer = setTimeout(() => {
       if (cancelled) return;
-      void checkForAppUpdate(false)
+      void checkForAppUpdate()
         .then((res) => {
           if (!cancelled && res.status === 'available') {
             availableUpdate = res;

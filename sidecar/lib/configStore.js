@@ -231,10 +231,6 @@ export class ConfigStore {
     fs.renameSync(tmpPath, this.filePath);
   }
 
-  getConfig() {
-    return this.config;
-  }
-
   getSettings() {
     return this.config.settings;
   }

@@ -2,7 +2,6 @@ import { EventEmitter } from 'node:events';
 import { checkBinary, getInstallHint, killProcessTree, spawnManaged } from './processUtils.js';
 
 const TRY_CLOUDFLARE_REGEX = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
-const MAX_TUNNEL_LOGS = 200;
 
 export class TunnelManager extends EventEmitter {
   constructor() {
@@ -13,18 +12,8 @@ export class TunnelManager extends EventEmitter {
     this.publicUrl = null; // Full https://.../mcp URL
     this.error = null;
     this.installHint = null;
-    this.logs = [];
     this.localPort = 8000;
     this._startTimer = null;
-  }
-
-  _pushLog(stream, line) {
-    const entry = { ts: new Date().toISOString(), stream, line };
-    this.logs.push(entry);
-    if (this.logs.length > MAX_TUNNEL_LOGS) {
-      this.logs.splice(0, this.logs.length - MAX_TUNNEL_LOGS);
-    }
-    this.emit('log', entry);
   }
 
   _emitState() {
@@ -41,10 +30,6 @@ export class TunnelManager extends EventEmitter {
       installHint: this.installHint,
       pid: this.proc?.pid || null,
     };
-  }
-
-  getLogs() {
-    return this.logs;
   }
 
   async start(localPort, settings = {}) {
@@ -66,7 +51,6 @@ export class TunnelManager extends EventEmitter {
       this.status = 'error';
       this.error = 'cloudflared is not installed or not found on PATH.';
       this.installHint = getInstallHint('cloudflared');
-      this._pushLog('stderr', this.error);
       this._emitState();
       return this.getState();
     }
@@ -98,19 +82,16 @@ export class TunnelManager extends EventEmitter {
       args = ['tunnel', '--no-autoupdate', '--url', `http://localhost:${localPort}`];
     }
 
-    this._pushLog('system', `Starting cloudflared (${this.mode} mode) -> http://localhost:${localPort}`);
-
     const proc = spawnManaged(probe.binary || 'cloudflared', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     this.proc = proc;
 
-    const handleChunk = (stream, chunk) => {
+    const handleChunk = (_stream, chunk) => {
       const text = chunk.toString('utf8');
       for (const rawLine of text.split(/\r?\n/)) {
         const line = rawLine.trim();
         if (!line) continue;
-        this._pushLog(stream, line);
 
         if (this.mode === 'quick') {
           const match = line.match(TRY_CLOUDFLARE_REGEX);
@@ -141,7 +122,6 @@ export class TunnelManager extends EventEmitter {
         : `Failed to start cloudflared: ${err.message}`;
       this.installHint = err.code === 'ENOENT' ? getInstallHint('cloudflared') : null;
       this.proc = null;
-      this._pushLog('stderr', this.error);
       this._emitState();
     });
 
@@ -155,7 +135,6 @@ export class TunnelManager extends EventEmitter {
           this.error = `cloudflared exited unexpectedly (code ${code ?? 'null'}, signal ${signal ?? 'none'}).`;
         }
         this.publicUrl = null;
-        this._pushLog('system', `cloudflared stopped (code=${code}, signal=${signal})`);
         this._emitState();
       }
     });
@@ -169,7 +148,7 @@ export class TunnelManager extends EventEmitter {
           this.status = 'live';
           this._emitState();
         } else {
-          this.error = 'Timed out waiting for Cloudflare Tunnel URL. Check your internet connection or tunnel logs.';
+          this.error = 'Timed out waiting for Cloudflare Tunnel URL. Check your internet connection or cloudflared setup.';
           this.status = 'error';
           this._emitState();
           this.stop().catch(() => {});

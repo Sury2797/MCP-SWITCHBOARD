@@ -20,7 +20,7 @@ export async function getAppVersion(): Promise<string> {
 /**
  * Checks for updates against configured release endpoints.
  */
-export async function checkForAppUpdate(_manual = false): Promise<UpdateCheckResult> {
+export async function checkForAppUpdate(): Promise<UpdateCheckResult> {
   if (!isTauriDesktop()) {
     return {
       status: 'unsupported',

@@ -44,7 +44,7 @@
     checkingUpdate = true;
     installError = null;
     try {
-      updateResult = await checkForAppUpdate(true);
+      updateResult = await checkForAppUpdate();
     } finally {
       checkingUpdate = false;
     }
