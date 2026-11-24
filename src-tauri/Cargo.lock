@@ -1989,7 +1989,7 @@ dependencies = [
 
 [[package]]
 name = "mcp-switchboard"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "serde_json",
