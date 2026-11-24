@@ -106,7 +106,7 @@ To publish signed OTA updates via [.github/workflows/release.yml](.github/workfl
 
 ```text
 mcp-switchboard/
-├── .github/workflows/release.yml     # Automated Windows build, signing & latest.json release CI
+├── .github/workflows/release.yml     # Automated Windows, macOS & Linux signed release + latest.json CI
 ├── public/app-icon.png               # Desktop & README application icon
 ├── sidecar/                          # Node.js Express + @modelcontextprotocol/sdk multiplexer
 │   ├── server.js                     # /mcp endpoint, /health, token-guarded /api/* & SSE stream

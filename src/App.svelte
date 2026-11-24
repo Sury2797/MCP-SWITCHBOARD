@@ -403,6 +403,10 @@
     open={settingsOpen}
     settings={appState?.settings}
     configPath={appState?.configPath}
+    initialUpdate={availableUpdate}
+    onUpdateStatus={(res) => {
+      availableUpdate = res.status === 'available' ? res : null;
+    }}
     onClose={() => (settingsOpen = false)}
     onSave={handleSaveSettings}
   />

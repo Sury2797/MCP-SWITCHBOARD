@@ -121,7 +121,7 @@ function broadcastUiEvent(event, data) {
  */
 function createAggregatedMcpServer() {
   const server = new Server(
-    { name: 'mcp-switchboard', version: '1.0.0' },
+    { name: 'mcp-switchboard', version: '1.0.2' },
     { capabilities: { tools: { listChanged: true } } }
   );
 

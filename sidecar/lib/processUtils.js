@@ -32,69 +32,86 @@ function findWindowsPythonDirs(localAppData, programFiles) {
 }
 
 /**
- * On Windows, refresh and augment process.env.PATH with user local bin, Python,
- * Node.js, and cloudflared paths. This guarantees newly installed CLI tools are
- * detected immediately even if Windows Explorer hasn't reloaded its environment.
+ * Augment process.env.PATH with standard user-local, Homebrew, Python, Node.js,
+ * and cloudflared locations across Windows, macOS, and Linux so GUI app launches
+ * find newly installed or package-manager binaries immediately.
  */
 let pathsAugmented = false;
-export function ensureWindowsPaths() {
-  if (!IS_WIN || pathsAugmented) return;
+export function ensurePlatformPaths() {
+  if (pathsAugmented) return;
   pathsAugmented = true;
 
   try {
     const currentPath = process.env.PATH || '';
-    const paths = currentPath.split(';').filter(Boolean);
-    const pathSet = new Set(paths.map((p) => p.toLowerCase()));
+    const paths = currentPath.split(path.delimiter).filter(Boolean);
+    const normalize = (p) => (IS_WIN ? p.toLowerCase() : p);
+    const pathSet = new Set(paths.map(normalize));
+    const candidates = [path.dirname(process.execPath)];
 
-    const home = process.env.USERPROFILE || process.env.HOME || '';
-    const localAppData = process.env.LOCALAPPDATA || (home ? path.join(home, 'AppData', 'Local') : '');
-    const appData = process.env.APPDATA || (home ? path.join(home, 'AppData', 'Roaming') : '');
-    const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
-    const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+    if (IS_WIN) {
+      const home = process.env.USERPROFILE || process.env.HOME || '';
+      const localAppData = process.env.LOCALAPPDATA || (home ? path.join(home, 'AppData', 'Local') : '');
+      const appData = process.env.APPDATA || (home ? path.join(home, 'AppData', 'Roaming') : '');
+      const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+      const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
 
-    const candidates = [
-      path.dirname(process.execPath),
-      path.join(programFiles, 'nodejs'),
-      path.join(appData, 'npm'),
-      home ? path.join(home, '.local', 'bin') : null,
-      home ? path.join(home, '.cargo', 'bin') : null,
-      localAppData ? path.join(localAppData, 'uv') : null,
-      ...findWindowsPythonDirs(localAppData, programFiles),
-      localAppData ? path.join(localAppData, 'Microsoft', 'WindowsApps') : null,
-      path.join(programFilesX86, 'cloudflared'),
-      path.join(programFiles, 'cloudflared'),
-    ].filter(Boolean);
+      candidates.push(
+        ...[
+          path.join(programFiles, 'nodejs'),
+          path.join(appData, 'npm'),
+          home ? path.join(home, '.local', 'bin') : null,
+          home ? path.join(home, '.cargo', 'bin') : null,
+          localAppData ? path.join(localAppData, 'uv') : null,
+          ...findWindowsPythonDirs(localAppData, programFiles),
+          localAppData ? path.join(localAppData, 'Microsoft', 'WindowsApps') : null,
+          path.join(programFilesX86, 'cloudflared'),
+          path.join(programFiles, 'cloudflared'),
+        ].filter(Boolean)
+      );
 
-    // Read latest User + Machine PATH from Windows registry (catches newly installed tools without reboot)
-    const regKeys = [
-      'HKCU\\Environment',
-      'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment',
-    ];
-    for (const regKey of regKeys) {
-      try {
-        const regOut = execSync(`reg query "${regKey}" /v Path`, { encoding: 'utf8', windowsHide: true });
-        const match = regOut.match(/Path\s+REG_[^\s]+\s+(.+)/i);
-        if (match?.[1]) {
-          for (const rawEntry of match[1].trim().split(';')) {
-            const expanded = expandWinEnv(rawEntry.trim());
-            if (expanded && !pathSet.has(expanded.toLowerCase())) candidates.push(expanded);
+      // Read latest User + Machine PATH from Windows registry (catches newly installed tools without reboot)
+      const regKeys = [
+        'HKCU\\Environment',
+        'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment',
+      ];
+      for (const regKey of regKeys) {
+        try {
+          const regOut = execSync(`reg query "${regKey}" /v Path`, { encoding: 'utf8', windowsHide: true });
+          const match = regOut.match(/Path\s+REG_[^\s]+\s+(.+)/i);
+          if (match?.[1]) {
+            for (const rawEntry of match[1].trim().split(';')) {
+              const expanded = expandWinEnv(rawEntry.trim());
+              if (expanded && !pathSet.has(normalize(expanded))) candidates.push(expanded);
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      }
+    } else {
+      const home = process.env.HOME || '';
+      candidates.push(
+        ...[
+          '/opt/homebrew/bin',
+          '/opt/homebrew/sbin',
+          '/usr/local/bin',
+          home ? path.join(home, '.local', 'bin') : null,
+          home ? path.join(home, '.cargo', 'bin') : null,
+          home ? path.join(home, '.volta', 'bin') : null,
+        ].filter(Boolean)
+      );
     }
 
     for (const candidate of candidates) {
-      if (!pathSet.has(candidate.toLowerCase()) && fs.existsSync(candidate)) {
+      if (!pathSet.has(normalize(candidate)) && fs.existsSync(candidate)) {
         paths.unshift(candidate);
-        pathSet.add(candidate.toLowerCase());
+        pathSet.add(normalize(candidate));
       }
     }
 
-    process.env.PATH = paths.join(';');
+    process.env.PATH = paths.join(path.delimiter);
   } catch {}
 }
 
-ensureWindowsPaths();
+ensurePlatformPaths();
 
 /**
  * Windows wrapper commands that require .cmd/.exe resolution or shell execution
@@ -163,7 +180,7 @@ export async function checkBinary(name, versionArgs = ['--version']) {
     };
   }
 
-  ensureWindowsPaths();
+  ensurePlatformPaths();
 
   const candidates = [];
 

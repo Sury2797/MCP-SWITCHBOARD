@@ -10,8 +10,52 @@ permissions:
   contents: write
 
 jobs:
+  create-release:
+    runs-on: ubuntu-22.04
+    outputs:
+      release_id: ${{ steps.create.outputs.release_id }}
+      tag_name: ${{ steps.create.outputs.tag_name }}
+      is_draft: ${{ steps.create.outputs.is_draft }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Ensure target GitHub Release exists
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+          if ! INFO=$(gh release view "$TAG" --json databaseId,isDraft 2>/dev/null); then
+            gh release create "$TAG" \
+              --draft \
+              --target "${{ github.sha }}" \
+              --title "MCP Switchboard ${TAG}" \
+              --notes "Automated multi-platform release of MCP Switchboard ${TAG} with signed in-app OTA updater artifacts."
+            INFO=$(gh release view "$TAG" --json databaseId,isDraft)
+          fi
+          RELEASE_ID=$(node -e "console.log(JSON.parse(process.argv[1]).databaseId)" "$INFO")
+          IS_DRAFT=$(node -e "console.log(JSON.parse(process.argv[1]).isDraft)" "$INFO")
+          echo "release_id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "is_draft=${IS_DRAFT}" >> "$GITHUB_OUTPUT"
+
   release-tauri:
-    runs-on: windows-latest
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'windows-latest'
+            args: ''
+          - platform: 'macos-latest'
+            args: '--target aarch64-apple-darwin'
+          - platform: 'macos-latest'
+            args: '--target x86_64-apple-darwin'
+          - platform: 'ubuntu-22.04'
+            args: ''
+    runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -24,6 +68,14 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install Linux desktop dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
 
       - name: Install dependencies
         run: npm ci
@@ -31,15 +83,32 @@ jobs:
       - name: Typecheck Svelte, TypeScript, and Sidecar
         run: npm run check
 
-      - name: Build and Publish Tauri App
-        uses: tauri-apps/tauri-action@v0
+      - name: Run Sidecar Security & E2E Tests
+        run: node sidecar/test-e2e.mjs
+
+      - name: Build and Upload Signed Tauri Release
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           tagName: v__VERSION__
           releaseName: 'MCP Switchboard v__VERSION__'
-          releaseBody: 'Automated release of MCP Switchboard with in-app updater support.'
-          releaseDraft: false
+          releaseBody: 'Automated multi-platform release of MCP Switchboard v__VERSION__ with signed in-app OTA updater support.'
+          releaseDraft: ${{ needs.create-release.outputs.is_draft == 'true' }}
           prerelease: false
+          updaterJsonPreferNsis: true
+          retryAttempts: 2
+          args: --config src-tauri/tauri.updater.conf.json ${{ matrix.args }}
+
+  publish-release:
+    needs: [create-release, release-tauri]
+    runs-on: ubuntu-22.04
+    if: ${{ needs.release-tauri.result == 'success' && needs.create-release.outputs.is_draft == 'true' }}
+    steps:
+      - name: Publish completed multi-platform release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ needs.create-release.outputs.tag_name }}" --repo "${{ github.repository }}" --draft=false

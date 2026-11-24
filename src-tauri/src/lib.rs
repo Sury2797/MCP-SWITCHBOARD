@@ -56,8 +56,11 @@ impl SidecarState {
                 // Hard kill entire process tree
                 #[cfg(target_os = "windows")]
                 {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
                     let _ = Command::new("taskkill")
                         .args(["/PID", &pid.to_string(), "/T", "/F"])
+                        .creation_flags(CREATE_NO_WINDOW)
                         .stdout(Stdio::null())
                         .stderr(Stdio::null())
                         .status();
@@ -112,6 +115,16 @@ fn get_sidecar_error(state: State<'_, SidecarState>) -> Option<String> {
     state.error.lock().ok().and_then(|g| g.clone())
 }
 
+#[tauri::command]
+fn prepare_for_update(state: State<'_, SidecarState>) {
+    state.shutdown();
+}
+
+#[tauri::command]
+fn relaunch_app(app: tauri::AppHandle) {
+    app.restart();
+}
+
 fn push_sidecar_variants(candidates: &mut Vec<PathBuf>, base: &Path) {
     candidates.push(base.join("sidecar").join("dist").join("server.cjs"));
     candidates.push(base.join("sidecar").join("server.js"));
@@ -123,20 +136,41 @@ fn resolve_node_binary() -> PathBuf {
         for candidate in [
             r"C:\Program Files\nodejs\node.exe",
             r"C:\Program Files (x86)\nodejs\node.exe",
+            r"C:\nvm4w\nodejs\node.exe",
         ] {
             let p = PathBuf::from(candidate);
             if p.is_file() {
                 return p;
             }
         }
-        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-            let p = PathBuf::from(local_app_data).join(r"Programs\nodejs\node.exe");
+        if let Ok(nvm_symlink) = std::env::var("NVM_SYMLINK") {
+            let p = PathBuf::from(nvm_symlink).join("node.exe");
             if p.is_file() {
                 return p;
             }
         }
+        if let Ok(volta_home) = std::env::var("VOLTA_HOME") {
+            let p = PathBuf::from(volta_home).join("node.exe");
+            if p.is_file() {
+                return p;
+            }
+        }
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            for rel in [r"Programs\nodejs\node.exe", r"Volta\bin\node.exe"] {
+                let p = PathBuf::from(&local_app_data).join(rel);
+                if p.is_file() {
+                    return p;
+                }
+            }
+        }
         if let Ok(app_data) = std::env::var("APPDATA") {
             let p = PathBuf::from(app_data).join(r"npm\node.exe");
+            if p.is_file() {
+                return p;
+            }
+        }
+        if let Ok(user_profile) = std::env::var("USERPROFILE") {
+            let p = PathBuf::from(user_profile).join(r"scoop\shims\node.exe");
             if p.is_file() {
                 return p;
             }
@@ -153,6 +187,29 @@ fn resolve_node_binary() -> PathBuf {
             let p = PathBuf::from(candidate);
             if p.is_file() {
                 return p;
+            }
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            for rel in [
+                ".volta/bin/node",
+                ".local/share/fnm/aliases/default/bin/node",
+            ] {
+                let p = PathBuf::from(&home).join(rel);
+                if p.is_file() {
+                    return p;
+                }
+            }
+            let nvm_dir = PathBuf::from(&home).join(".nvm/versions/node");
+            if let Ok(entries) = std::fs::read_dir(nvm_dir) {
+                let mut versions: Vec<PathBuf> = entries
+                    .filter_map(Result::ok)
+                    .map(|e| e.path().join("bin/node"))
+                    .filter(|p| p.is_file())
+                    .collect();
+                versions.sort();
+                if let Some(latest) = versions.pop() {
+                    return latest;
+                }
             }
         }
     }
@@ -191,15 +248,18 @@ fn spawn_sidecar(
 ) -> Result<Child, String> {
     let script = resolve_sidecar_script(app)
         .ok_or_else(|| "Bundled MCP Switchboard sidecar script was not found.".to_string())?;
-    let sidecar_dir = script
-        .parent()
-        .ok_or_else(|| "Invalid sidecar script directory.".to_string())?
-        .to_path_buf();
     let node_bin = resolve_node_binary();
+
+    let data_dir = app.path().app_data_dir().ok();
+    if let Some(ref dir) = data_dir {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // Keep CWD outside the install folder so Windows NSIS updates never hit directory handle locks
+    let work_dir = data_dir.clone().unwrap_or_else(std::env::temp_dir);
 
     let mut cmd = Command::new(&node_bin);
     cmd.arg(&script)
-        .current_dir(&sidecar_dir)
+        .current_dir(&work_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
 
@@ -207,9 +267,8 @@ fn spawn_sidecar(
     cmd.env("MCP_SWITCHBOARD_PARENT_PID", std::process::id().to_string());
     cmd.env("MCP_SWITCHBOARD_CONTROL_TOKEN", control_token);
 
-    if let Ok(data_dir) = app.path().app_data_dir() {
-        let _ = std::fs::create_dir_all(&data_dir);
-        cmd.env("MCP_SWITCHBOARD_DATA_DIR", data_dir);
+    if let Some(dir) = data_dir {
+        cmd.env("MCP_SWITCHBOARD_DATA_DIR", dir);
     }
 
     #[cfg(target_os = "windows")]
@@ -262,7 +321,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_sidecar_port,
             get_sidecar_token,
-            get_sidecar_error
+            get_sidecar_error,
+            prepare_for_update,
+            relaunch_app
         ])
         .setup(move |app| {
             let state = app.state::<SidecarState>();

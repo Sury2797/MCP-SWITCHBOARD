@@ -10,13 +10,23 @@
     open?: boolean;
     settings?: SwitchboardSettings | null;
     configPath?: string;
+    initialUpdate?: UpdateCheckResult | null;
+    onUpdateStatus?: (result: UpdateCheckResult) => void;
     onClose?: () => void;
     onSave?: (patch: Partial<SwitchboardSettings>) => Promise<void>;
   }
 
-  let { open = false, settings = null, configPath = '', onClose = () => {}, onSave = async () => {} }: Props = $props();
+  let {
+    open = false,
+    settings = null,
+    configPath = '',
+    initialUpdate = null,
+    onUpdateStatus = () => {},
+    onClose = () => {},
+    onSave = async () => {},
+  }: Props = $props();
 
-  let appVersion = $state('1.0.1');
+  let appVersion = $state(typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : '1.0.2');
   $effect(() => {
     if (open) {
       void getAppVersion().then((v) => {
@@ -40,11 +50,19 @@
   let downloadProgress = $state(0);
   let installError = $state<string | null>(null);
 
+  $effect(() => {
+    if (open && initialUpdate?.status === 'available' && !downloadingUpdate && !updateResult) {
+      updateResult = initialUpdate;
+    }
+  });
+
   async function handleCheckUpdate(): Promise<void> {
     checkingUpdate = true;
     installError = null;
     try {
-      updateResult = await checkForAppUpdate();
+      const res = await checkForAppUpdate();
+      updateResult = res;
+      onUpdateStatus(res);
     } finally {
       checkingUpdate = false;
     }
@@ -286,7 +304,7 @@
                 {#if downloadingUpdate}
                   <div class="space-y-1.5 pt-1">
                     <div class="flex justify-between text-[11px] font-mono">
-                      <span>Downloading…</span>
+                      <span>{downloadProgress >= 100 ? 'Installing & restarting…' : 'Downloading…'}</span>
                       <span>{downloadProgress}%</span>
                     </div>
                     <div class="h-1.5 w-full rounded-full bg-sky-200 dark:bg-sky-950 overflow-hidden">
@@ -306,9 +324,9 @@
                 {/if}
               </div>
             {:else if updateResult.status === 'error'}
-              <div class="flex items-center gap-2 rounded-lg border border-graphite-200 dark:border-graphite-800 bg-graphite-100/60 dark:bg-graphite-900/60 px-3 py-2 text-xs text-graphite-600 dark:text-graphite-400">
-                <StreamlineIcon name="Info" size={13} class="shrink-0 text-graphite-500" />
-                <span class="truncate">{updateResult.error}</span>
+              <div class="flex items-start gap-2 rounded-lg border border-graphite-200 dark:border-graphite-800 bg-graphite-100/60 dark:bg-graphite-900/60 px-3 py-2 text-xs text-graphite-600 dark:text-graphite-400">
+                <StreamlineIcon name="Info" size={13} class="shrink-0 mt-0.5 text-graphite-500" />
+                <span class="break-words leading-relaxed">{updateResult.error}</span>
               </div>
             {:else if updateResult.status === 'unsupported'}
               <div class="flex items-center gap-2 rounded-lg border border-graphite-200 dark:border-graphite-800 bg-graphite-100/60 dark:bg-graphite-900/60 px-3 py-2 text-[11px] text-graphite-500">
