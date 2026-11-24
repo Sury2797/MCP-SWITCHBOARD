@@ -1,20 +1,31 @@
-<script>
+<script lang="ts">
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import StreamlineIcon from '../lib/icons/StreamlineIcon.svelte';
   import Button from '../lib/primitives/Button.svelte';
-  import { checkForAppUpdate, getAppVersion, installAppUpdate } from '../lib/updater.js';
+  import { checkForAppUpdate, getAppVersion, installAppUpdate } from '../lib/updater';
+  import type { SwitchboardSettings, TunnelMode, UpdateCheckResult } from '../lib/types';
 
-  let { open = false, settings = null, configPath = '', onClose = () => {}, onSave = async () => {} } = $props();
+  interface Props {
+    open?: boolean;
+    settings?: SwitchboardSettings | null;
+    configPath?: string;
+    onClose?: () => void;
+    onSave?: (patch: Partial<SwitchboardSettings>) => Promise<void>;
+  }
 
-  let appVersion = $state('1.0.0');
+  let { open = false, settings = null, configPath = '', onClose = () => {}, onSave = async () => {} }: Props = $props();
+
+  let appVersion = $state('1.0.1');
   $effect(() => {
     if (open) {
-      getAppVersion().then((v) => { appVersion = v; });
+      void getAppVersion().then((v) => {
+        appVersion = v;
+      });
     }
   });
 
-  let tunnelMode = $state('quick');
+  let tunnelMode = $state<TunnelMode>('quick');
   let autoStartTunnel = $state(false);
   let port = $state(8000);
   let namedTunnelToken = $state('');
@@ -24,12 +35,12 @@
 
   // In-app updater state
   let checkingUpdate = $state(false);
-  let updateResult = $state(null);
+  let updateResult = $state<UpdateCheckResult | null>(null);
   let downloadingUpdate = $state(false);
   let downloadProgress = $state(0);
-  let installError = $state(null);
+  let installError = $state<string | null>(null);
 
-  async function handleCheckUpdate() {
+  async function handleCheckUpdate(): Promise<void> {
     checkingUpdate = true;
     installError = null;
     try {
@@ -39,7 +50,7 @@
     }
   }
 
-  async function handleInstallUpdate() {
+  async function handleInstallUpdate(): Promise<void> {
     downloadingUpdate = true;
     installError = null;
     try {
@@ -47,7 +58,7 @@
         downloadProgress = p.percent;
       });
     } catch (err) {
-      installError = err.message || 'Failed to install update';
+      installError = err instanceof Error ? err.message : 'Failed to install update';
       downloadingUpdate = false;
     }
   }
@@ -62,11 +73,11 @@
     namedTunnelDomain = settings.namedTunnelDomain || '';
   });
 
-  function handleKey(e) {
+  function handleKey(e: KeyboardEvent): void {
     if (open && e.key === 'Escape') onClose();
   }
 
-  async function handleSubmit(e) {
+  async function handleSubmit(e: SubmitEvent): Promise<void> {
     e.preventDefault();
     saving = true;
     try {

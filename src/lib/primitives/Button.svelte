@@ -1,13 +1,29 @@
-<script>
+<script lang="ts">
+  import type { Snippet } from 'svelte';
+
+  type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+  type ButtonSize = 'md' | 'sm' | 'xs';
+
+  interface Props {
+    children: Snippet;
+    variant?: ButtonVariant;
+    size?: ButtonSize;
+    iconOnly?: boolean;
+    disabled?: boolean;
+    type?: 'button' | 'submit' | 'reset';
+    onclick?: (e: MouseEvent) => void;
+    class?: string;
+    'aria-label'?: string;
+    title?: string;
+  }
+
   /**
    * BoardUI-inspired precision Button primitive.
-   * Calm monochrome primary authority, proper dark-mode surfaces (zero white flash),
-   * and named-property transitions.
    */
   let {
     children,
-    variant = 'secondary', // 'primary' | 'secondary' | 'ghost' | 'danger'
-    size = 'sm',           // 'md' (36px) | 'sm' (32px) | 'xs' (26px)
+    variant = 'secondary',
+    size = 'sm',
     iconOnly = false,
     disabled = false,
     type = 'button',
@@ -15,9 +31,9 @@
     class: className = '',
     'aria-label': ariaLabel = undefined,
     title = undefined,
-  } = $props();
+  }: Props = $props();
 
-  const SIZES = {
+  const SIZES: Record<ButtonSize, { default: string; icon: string }> = {
     md: {
       default: 'h-10 px-4 rounded-lg text-xs sm:text-sm font-medium gap-2',
       icon: 'h-10 w-10 p-0 rounded-lg',
@@ -32,7 +48,7 @@
     },
   };
 
-  const VARIANTS = {
+  const VARIANTS: Record<ButtonVariant, string> = {
     primary:
       'bg-graphite-950 text-graphite-50 hover:bg-graphite-800 active:bg-graphite-900 dark:bg-graphite-100 dark:text-graphite-950 dark:hover:bg-white dark:active:bg-graphite-200 border border-transparent',
     secondary:

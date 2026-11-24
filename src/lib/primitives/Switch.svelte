@@ -1,16 +1,24 @@
-<script>
+<script lang="ts">
+  interface Props {
+    checked?: boolean;
+    starting?: boolean;
+    disabled?: boolean;
+    size?: 'sm' | 'md';
+    label?: string;
+    onchange?: (next: boolean) => void;
+  }
+
   /**
    * BoardUI-inspired precision tactile toggle switch.
-   * Exact travel geometry with clear off/on states and zero blurry gradients.
    */
   let {
     checked = false,
     starting = false,
     disabled = false,
-    size = 'sm', // 'sm' (h-5 w-9) | 'md' (h-6 w-11)
+    size = 'sm',
     label = 'Toggle switch',
     onchange = () => {},
-  } = $props();
+  }: Props = $props();
 </script>
 
 <button

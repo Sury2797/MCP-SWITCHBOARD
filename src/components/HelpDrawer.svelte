@@ -1,16 +1,23 @@
-<script>
+<script lang="ts">
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import StreamlineIcon from '../lib/icons/StreamlineIcon.svelte';
   import Button from '../lib/primitives/Button.svelte';
-  import { api } from '../lib/api.js';
+  import { api } from '../lib/api';
+  import type { DiagnosticsReport } from '../lib/types';
 
-  let { open = false, onClose = () => {}, onNotify = () => {} } = $props();
+  interface Props {
+    open?: boolean;
+    onClose?: () => void;
+    onNotify?: (message: string, type?: 'info' | 'error') => void;
+  }
 
-  let diag = $state(null);
+  let { open = false, onClose = () => {}, onNotify = () => {} }: Props = $props();
+
+  let diag = $state<DiagnosticsReport | null>(null);
   let loading = $state(false);
 
-  async function loadDiagnostics() {
+  async function loadDiagnostics(): Promise<void> {
     loading = true;
     try {
       diag = await api.getDiagnostics();
@@ -22,16 +29,20 @@
   }
 
   $effect(() => {
-    if (open) loadDiagnostics();
+    if (open) void loadDiagnostics();
   });
 
-  function handleKey(e) {
+  function handleKey(e: KeyboardEvent): void {
     if (open && e.key === 'Escape') onClose();
   }
 
-  async function copyCmd(label, cmd) {
-    await navigator.clipboard.writeText(cmd);
-    onNotify(`Copied ${label} install command`);
+  async function copyCmd(label: string, cmd: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(cmd);
+      onNotify(`Copied ${label} install command`);
+    } catch {
+      onNotify('Unable to access clipboard', 'error');
+    }
   }
 </script>
 

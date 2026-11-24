@@ -1,9 +1,15 @@
-<script>
+<script lang="ts">
+  interface Props {
+    value?: number;
+    duration?: number;
+    prefix?: string;
+    suffix?: string;
+  }
+
   /**
    * Native Svelte 5 kinetic number ticker adapted from React Bits CountUp.
-   * Uses ease-out-expo interpolation and respects prefers-reduced-motion.
    */
-  let { value = 0, duration = 280, prefix = '', suffix = '' } = $props();
+  let { value = 0, duration = 280, prefix = '', suffix = '' }: Props = $props();
 
   let display = $state(0);
   let current = 0;
@@ -23,9 +29,9 @@
     const startVal = current;
     const delta = target - startVal;
     const startTime = performance.now();
-    let rafId;
+    let rafId: number | undefined;
 
-    function tick(now) {
+    function tick(now: number): void {
       const t = Math.min(1, (now - startTime) / duration);
       const eased = 1 - Math.pow(2, -10 * t);
       current = Math.round(startVal + delta * eased);
@@ -40,7 +46,7 @@
 
     rafId = requestAnimationFrame(tick);
     return () => {
-      cancelAnimationFrame(rafId);
+      if (rafId !== undefined) cancelAnimationFrame(rafId);
     };
   });
 </script>

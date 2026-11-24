@@ -1,23 +1,31 @@
-<script>
+<script lang="ts">
   import { tick, untrack } from 'svelte';
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import StreamlineIcon from '../lib/icons/StreamlineIcon.svelte';
   import Button from '../lib/primitives/Button.svelte';
-  import { api } from '../lib/api.js';
+  import { api } from '../lib/api';
+  import type { LiveLogEvent, LogEntry, McpServerSnapshot } from '../lib/types';
 
-  let { server = null, liveLogEvent = null, onClose = () => {}, onNotify = () => {} } = $props();
+  interface Props {
+    server?: McpServerSnapshot | null;
+    liveLogEvent?: LiveLogEvent | null;
+    onClose?: () => void;
+    onNotify?: (message: string, type?: 'info' | 'error') => void;
+  }
 
-  let logs = $state([]);
+  let { server = null, liveLogEvent = null, onClose = () => {}, onNotify = () => {} }: Props = $props();
+
+  let logs = $state<LogEntry[]>([]);
   let copied = $state(false);
-  let bottomEl = $state(null);
-  let lastEventRef = null;
+  let bottomEl = $state<HTMLDivElement | null>(null);
+  let lastEventRef: LiveLogEvent | null = null;
 
   $effect(() => {
     const activeServer = server;
     if (!activeServer) return;
     let cancelled = false;
-    api
+    void api
       .getServerLogs(activeServer.name)
       .then((res) => {
         if (!cancelled) logs = res.logs || [];
@@ -38,24 +46,28 @@
     const current = untrack(() => logs);
     const next = [...current, evt.entry];
     logs = next.length > 200 ? next.slice(-200) : next;
-    tick().then(() => bottomEl?.scrollIntoView({ behavior: 'smooth' }));
+    void tick().then(() => bottomEl?.scrollIntoView({ behavior: 'smooth' }));
   });
 
-  function handleKey(e) {
+  function handleKey(e: KeyboardEvent): void {
     if (server && e.key === 'Escape') onClose();
   }
 
-  async function handleCopy() {
-    const text = logs.map((l) => `[${l.ts}] [${l.stream}] ${l.line}`).join('\n');
-    await navigator.clipboard.writeText(text);
-    copied = true;
-    onNotify('Copied logs to clipboard');
-    setTimeout(() => {
-      copied = false;
-    }, 1600);
+  async function handleCopy(): Promise<void> {
+    try {
+      const text = logs.map((l) => `[${l.ts}] [${l.stream}] ${l.line}`).join('\n');
+      await navigator.clipboard.writeText(text);
+      copied = true;
+      onNotify('Copied logs to clipboard');
+      setTimeout(() => {
+        copied = false;
+      }, 1600);
+    } catch {
+      onNotify('Unable to access clipboard', 'error');
+    }
   }
 
-  async function handleClear() {
+  async function handleClear(): Promise<void> {
     if (!server) return;
     await api.clearServerLogs(server.name);
     logs = [];

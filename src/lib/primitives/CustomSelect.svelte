@@ -1,12 +1,27 @@
-<script>
+<script lang="ts">
   import { onMount } from 'svelte';
-  import { fade, fly } from 'svelte/transition';
+  import { fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import StreamlineIcon from '../icons/StreamlineIcon.svelte';
 
+  export interface SelectOption {
+    value: string;
+    label: string;
+    badge?: string;
+    description?: string;
+  }
+
+  interface Props {
+    value?: string;
+    options?: SelectOption[];
+    placeholder?: string;
+    disabled?: boolean;
+    id?: string;
+    onchange?: (value: string) => void;
+  }
+
   /**
    * BoardUI-inspired precision CustomSelect component.
-   * Replaces ugly browser-native <select> with a custom styled dropdown.
    */
   let {
     value = '',
@@ -15,25 +30,25 @@
     disabled = false,
     id = undefined,
     onchange = () => {},
-  } = $props();
+  }: Props = $props();
 
   let open = $state(false);
-  let containerEl = $state(null);
+  let containerEl = $state<HTMLDivElement | null>(null);
   const listboxId = $derived(`${id || 'select'}-listbox`);
 
   const selectedOption = $derived(options.find((opt) => opt.value === value) || null);
 
-  function toggleOpen() {
+  function toggleOpen(): void {
     if (disabled) return;
     open = !open;
   }
 
-  function select(val) {
+  function select(val: string): void {
     onchange(val);
     open = false;
   }
 
-  function handleKeydown(e) {
+  function handleKeydown(e: KeyboardEvent): void {
     if (!open) return;
     if (e.key === 'Escape') {
       e.stopPropagation();
@@ -53,8 +68,8 @@
   }
 
   onMount(() => {
-    function handleClickOutside(e) {
-      if (open && containerEl && !containerEl.contains(e.target)) {
+    function handleClickOutside(e: MouseEvent): void {
+      if (open && containerEl && e.target instanceof Node && !containerEl.contains(e.target)) {
         open = false;
       }
     }

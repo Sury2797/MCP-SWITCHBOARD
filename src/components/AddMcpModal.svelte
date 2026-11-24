@@ -1,9 +1,23 @@
-<script>
+<script lang="ts">
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import StreamlineIcon from '../lib/icons/StreamlineIcon.svelte';
   import Button from '../lib/primitives/Button.svelte';
-  import CustomSelect from '../lib/primitives/CustomSelect.svelte';
+  import CustomSelect, { type SelectOption } from '../lib/primitives/CustomSelect.svelte';
+  import type { McpServerSnapshot, ServerSavePayload, TransportType } from '../lib/types';
+
+  interface Props {
+    open?: boolean;
+    editingServer?: McpServerSnapshot | null;
+    onClose?: () => void;
+    onImportJson?: (jsonText: string) => Promise<void>;
+    onSaveServer?: (payload: ServerSavePayload) => Promise<void>;
+  }
+
+  interface KeyValuePair {
+    key: string;
+    value: string;
+  }
 
   let {
     open = false,
@@ -11,9 +25,9 @@
     onClose = () => {},
     onImportJson = async () => {},
     onSaveServer = async () => {},
-  } = $props();
+  }: Props = $props();
 
-  const TRANSPORT_OPTIONS = [
+  const TRANSPORT_OPTIONS: SelectOption[] = [
     {
       value: 'stdio',
       label: 'STDIO',
@@ -48,19 +62,19 @@
 
   const isEditing = $derived(Boolean(editingServer));
 
-  let tab = $state('json');
+  let tab = $state<'json' | 'form'>('json');
   let jsonText = $state('');
   let submitting = $state(false);
-  let submitError = $state(null);
+  let submitError = $state<string | null>(null);
 
   let name = $state('');
-  let transport = $state('stdio');
+  let transport = $state<TransportType>('stdio');
   let command = $state('');
   let argsText = $state('');
   let url = $state('');
-  let envPairs = $state([]);
-  let headerPairs = $state([]);
-  let revealedSecrets = $state({});
+  let envPairs = $state<KeyValuePair[]>([]);
+  let headerPairs = $state<KeyValuePair[]>([]);
+  let revealedSecrets = $state<Record<string, boolean>>({});
 
   $effect(() => {
     if (!open) return;
@@ -89,25 +103,27 @@
   });
 
   const jsonValidation = $derived.by(() => {
-    if (!jsonText.trim()) return { valid: false, error: null, servers: [] };
+    if (!jsonText.trim()) return { valid: false, error: null as string | null, servers: [] as Array<{ name: string; transport: string; target: string }> };
     try {
-      const parsed = JSON.parse(jsonText);
+      const parsed: unknown = JSON.parse(jsonText);
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         return { valid: false, error: 'Root value must be a JSON object.', servers: [] };
       }
-      const map =
-        parsed.mcpServers && typeof parsed.mcpServers === 'object' && !Array.isArray(parsed.mcpServers)
-          ? parsed.mcpServers
-          : parsed;
-      const entries = Object.entries(map);
+      const root = parsed as Record<string, unknown>;
+      const rawMap =
+        root.mcpServers && typeof root.mcpServers === 'object' && !Array.isArray(root.mcpServers)
+          ? (root.mcpServers as Record<string, unknown>)
+          : root;
+      const entries = Object.entries(rawMap);
       if (entries.length === 0) {
         return { valid: false, error: 'No server entries found in JSON.', servers: [] };
       }
-      const summaries = [];
-      for (const [entryName, cfg] of entries) {
-        if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
+      const summaries: Array<{ name: string; transport: string; target: string }> = [];
+      for (const [entryName, rawCfg] of entries) {
+        if (!rawCfg || typeof rawCfg !== 'object' || Array.isArray(rawCfg)) {
           return { valid: false, error: `Entry "${entryName}" must be a JSON object.`, servers: [] };
         }
+        const cfg = rawCfg as { url?: unknown; command?: unknown; args?: unknown[] };
         const hasUrl = typeof cfg.url === 'string' && cfg.url.trim().length > 0;
         const hasCmd = typeof cfg.command === 'string' && cfg.command.trim().length > 0;
         if (!hasUrl && !hasCmd) {
@@ -120,20 +136,22 @@
         summaries.push({
           name: entryName.trim(),
           transport: hasUrl ? 'HTTP' : 'STDIO',
-          target: hasUrl ? cfg.url.trim() : `${cfg.command} ${(cfg.args || []).join(' ')}`.trim(),
+          target: hasUrl
+            ? String(cfg.url).trim()
+            : `${String(cfg.command)} ${(Array.isArray(cfg.args) ? cfg.args : []).join(' ')}`.trim(),
         });
       }
       return { valid: true, error: null, servers: summaries };
     } catch (err) {
-      return { valid: false, error: err.message, servers: [] };
+      return { valid: false, error: err instanceof Error ? err.message : String(err), servers: [] };
     }
   });
 
-  function handleWindowKey(e) {
+  function handleWindowKey(e: KeyboardEvent): void {
     if (open && e.key === 'Escape') onClose();
   }
 
-  async function handleImportSubmit(e) {
+  async function handleImportSubmit(e: SubmitEvent): Promise<void> {
     e.preventDefault();
     if (!jsonValidation.valid) return;
     submitting = true;
@@ -142,22 +160,22 @@
       await onImportJson(jsonText);
       onClose();
     } catch (err) {
-      submitError = err.message;
+      submitError = err instanceof Error ? err.message : String(err);
     } finally {
       submitting = false;
     }
   }
 
-  async function handleFormSubmit(e) {
+  async function handleFormSubmit(e: SubmitEvent): Promise<void> {
     e.preventDefault();
     submitting = true;
     submitError = null;
     try {
-      const env = {};
+      const env: Record<string, string> = {};
       for (const row of envPairs) {
         if (row.key.trim()) env[row.key.trim()] = row.value;
       }
-      const headers = {};
+      const headers: Record<string, string> = {};
       for (const row of headerPairs) {
         if (row.key.trim()) headers[row.key.trim()] = row.value;
       }
@@ -177,7 +195,7 @@
       });
       onClose();
     } catch (err) {
-      submitError = err.message;
+      submitError = err instanceof Error ? err.message : String(err);
     } finally {
       submitting = false;
     }
@@ -208,7 +226,7 @@
     >
       <div class="flex items-center justify-between border-b border-graphite-200 dark:border-graphite-800 px-4 sm:px-5 py-3 sm:py-3.5 shrink-0">
         <h2 id="add-mcp-title" class="text-sm font-semibold text-graphite-950 dark:text-graphite-50">
-          {isEditing ? `Edit ${editingServer.name}` : 'Add MCP Server'}
+          {editingServer ? `Edit ${editingServer.name}` : 'Add MCP Server'}
         </h2>
         <Button variant="ghost" size="xs" iconOnly onclick={onClose} aria-label="Close modal">
           <StreamlineIcon name="X" size={13} />
@@ -311,7 +329,7 @@
                 id="mcp-transport"
                 value={transport}
                 options={TRANSPORT_OPTIONS}
-                onchange={(v) => (transport = v)}
+                onchange={(v) => (transport = v as TransportType)}
               />
             </div>
           </div>

@@ -1,10 +1,24 @@
-<script>
+<script lang="ts">
   import StreamlineIcon from '../lib/icons/StreamlineIcon.svelte';
   import Switch from '../lib/primitives/Switch.svelte';
   import Button from '../lib/primitives/Button.svelte';
   import SegmentedControl from '../lib/primitives/SegmentedControl.svelte';
   import CountUp from '../lib/primitives/CountUp.svelte';
-  import { spotlight } from '../lib/primitives/spotlight.js';
+  import { spotlight } from '../lib/primitives/spotlight';
+  import type { McpServerSnapshot } from '../lib/types';
+
+  interface Props {
+    servers?: McpServerSnapshot[];
+    busyServers?: Record<string, boolean>;
+    searchInputEl?: HTMLInputElement | null;
+    onToggle?: (name: string, enable: boolean) => void;
+    onAdd?: () => void;
+    onEdit?: (server: McpServerSnapshot) => void;
+    onDelete?: (server: McpServerSnapshot) => void;
+    onInspectTools?: (server: McpServerSnapshot) => void;
+    onViewLogs?: (server: McpServerSnapshot) => void;
+    onNotify?: (message: string, type?: 'info' | 'error') => void;
+  }
 
   let {
     servers = [],
@@ -17,10 +31,10 @@
     onInspectTools = () => {},
     onViewLogs = () => {},
     onNotify = () => {},
-  } = $props();
+  }: Props = $props();
 
   let query = $state('');
-  let filterTab = $state('all');
+  let filterTab = $state<'all' | 'active' | 'stdio' | 'http'>('all');
 
   const filterOptions = $derived([
     { value: 'all', label: 'All', count: servers.length },
@@ -56,9 +70,13 @@
     });
   });
 
-  async function copyHint(hint) {
-    await navigator.clipboard.writeText(hint);
-    onNotify('Copied install command');
+  async function copyHint(hint: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(hint);
+      onNotify('Copied install command');
+    } catch {
+      onNotify('Unable to access clipboard', 'error');
+    }
   }
 </script>
 
@@ -100,7 +118,7 @@
         <SegmentedControl
           options={filterOptions}
           value={filterTab}
-          onchange={(v) => (filterTab = v)}
+          onchange={(v) => (filterTab = v as 'all' | 'active' | 'stdio' | 'http')}
         />
       </div>
     </div>
@@ -282,7 +300,7 @@
                       </code>
                       <button
                         type="button"
-                        onclick={() => copyHint(server.installHint)}
+                        onclick={() => server.installHint && void copyHint(server.installHint)}
                         class="underline text-[11px]"
                       >
                         Copy

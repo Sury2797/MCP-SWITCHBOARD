@@ -134,7 +134,7 @@ export class TunnelManager extends EventEmitter {
     proc.stdout?.on('data', (chunk) => handleChunk('stdout', chunk));
     proc.stderr?.on('data', (chunk) => handleChunk('stderr', chunk));
 
-    proc.on('error', (err) => {
+    proc.on('error', (/** @type {NodeJS.ErrnoException} */ err) => {
       this.status = 'error';
       this.error = err.code === 'ENOENT'
         ? 'cloudflared binary not found in PATH.'

@@ -1,13 +1,19 @@
-<script>
+<script lang="ts">
   import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import StreamlineIcon from '../lib/icons/StreamlineIcon.svelte';
   import Button from '../lib/primitives/Button.svelte';
-  import { api } from '../lib/api.js';
+  import { api } from '../lib/api';
+  import type { McpServerSnapshot, ServerTool } from '../lib/types';
 
-  let { server = null, onClose = () => {} } = $props();
+  interface Props {
+    server?: McpServerSnapshot | null;
+    onClose?: () => void;
+  }
 
-  let tools = $state([]);
+  let { server = null, onClose = () => {} }: Props = $props();
+
+  let tools = $state<ServerTool[]>([]);
   let loading = $state(false);
 
   $effect(() => {
@@ -15,7 +21,7 @@
     if (!active) return;
     let cancelled = false;
     loading = true;
-    api
+    void api
       .getServerTools(active.name)
       .then((res) => {
         if (!cancelled) tools = res.tools || [];
@@ -32,7 +38,7 @@
     };
   });
 
-  function handleKey(e) {
+  function handleKey(e: KeyboardEvent): void {
     if (server && e.key === 'Escape') onClose();
   }
 </script>

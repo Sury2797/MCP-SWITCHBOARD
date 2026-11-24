@@ -1,12 +1,13 @@
-<script>
-  /**
-   * Compact BoardUI 3-segment hairline-divided telemetry strip.
-   * Replaces bloated multi-card KPI sprawl with a single dense 68px instrument bar.
-   */
+<script lang="ts">
   import CountUp from '../lib/primitives/CountUp.svelte';
-  import { spotlight } from '../lib/primitives/spotlight.js';
+  import { spotlight } from '../lib/primitives/spotlight';
+  import type { SwitchboardTotals } from '../lib/types';
 
-  let { totals = { activeServers: 0, totalServers: 0, totalTools: 0, totalTokens: 0 } } = $props();
+  interface Props {
+    totals?: SwitchboardTotals;
+  }
+
+  let { totals = { activeServers: 0, totalServers: 0, totalTools: 0, totalTokens: 0 } }: Props = $props();
 
   const budget = $derived.by(() => {
     const tokens = totals?.totalTokens || 0;

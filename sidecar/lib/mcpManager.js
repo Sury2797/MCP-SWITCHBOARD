@@ -181,6 +181,7 @@ export class McpManager extends EventEmitter {
       }
     }
 
+    /** @type {any} */
     let transport;
     const client = new Client(
       { name: 'mcp-switchboard', version: '1.0.0' },

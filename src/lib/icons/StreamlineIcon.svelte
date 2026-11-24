@@ -1,5 +1,14 @@
-<script>
-  import { STREAMLINE_ICONS } from './streamlineData.js';
+<script lang="ts">
+  import { STREAMLINE_ICONS } from './streamlineData';
+  import type { IconName } from '../types';
+
+  interface Props {
+    name: IconName;
+    size?: number;
+    strokeWidth?: number;
+    class?: string;
+    ariaHidden?: boolean;
+  }
 
   let {
     name,
@@ -7,7 +16,7 @@
     strokeWidth = 1.25,
     class: className = '',
     ariaHidden = true,
-  } = $props();
+  }: Props = $props();
 
   const icon = $derived(STREAMLINE_ICONS[name]);
 </script>

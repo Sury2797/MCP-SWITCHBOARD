@@ -1,9 +1,20 @@
-<script>
+<script lang="ts">
+  export interface SegmentOption {
+    value: string;
+    label: string;
+    count?: number;
+  }
+
+  interface Props {
+    options?: SegmentOption[];
+    value?: string;
+    onchange?: (value: string) => void;
+  }
+
   /**
    * BoardUI-inspired segmented pill control with crisp active indicator.
-   * Matches 34px toolbar height grid.
    */
-  let { options = [], value = '', onchange = () => {} } = $props();
+  let { options = [], value = '', onchange = () => {} }: Props = $props();
 </script>
 
 <div

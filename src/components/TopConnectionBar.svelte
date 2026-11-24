@@ -1,7 +1,20 @@
-<script>
+<script lang="ts">
   import StreamlineIcon from '../lib/icons/StreamlineIcon.svelte';
   import Switch from '../lib/primitives/Switch.svelte';
   import Button from '../lib/primitives/Button.svelte';
+  import type { ThemeMode, TunnelState } from '../lib/types';
+
+  interface Props {
+    port?: number;
+    tunnel?: TunnelState | null;
+    theme?: ThemeMode;
+    tunnelBusy?: boolean;
+    onToggleTunnel?: (enable: boolean) => void;
+    onToggleTheme?: () => void;
+    onOpenSettings?: () => void;
+    onOpenHelp?: () => void;
+    onNotify?: (message: string, type?: 'info' | 'error') => void;
+  }
 
   let {
     port = 8000,
@@ -13,7 +26,7 @@
     onOpenSettings = () => {},
     onOpenHelp = () => {},
     onNotify = () => {},
-  } = $props();
+  }: Props = $props();
 
   let copied = $state(false);
 
@@ -36,7 +49,7 @@
     return { text: 'Local only', dot: 'bg-graphite-400 dark:bg-graphite-600', textCls: 'text-graphite-500 dark:text-graphite-400' };
   });
 
-  async function handleCopy() {
+  async function handleCopy(): Promise<void> {
     try {
       await navigator.clipboard.writeText(displayUrl);
       copied = true;
@@ -49,10 +62,14 @@
     }
   }
 
-  async function copyInstallHint() {
+  async function copyInstallHint(): Promise<void> {
     if (!tunnel?.installHint) return;
-    await navigator.clipboard.writeText(tunnel.installHint);
-    onNotify('Copied install command');
+    try {
+      await navigator.clipboard.writeText(tunnel.installHint);
+      onNotify('Copied install command');
+    } catch {
+      onNotify('Unable to access clipboard', 'error');
+    }
   }
 </script>
 

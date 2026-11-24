@@ -80,6 +80,7 @@ function assertSafeServerName(rawName) {
 /**
  * Normalize a single server definition from either standard Claude/Cursor mcpServers JSON
  * or the Switchboard UI form into our canonical persisted shape.
+ * @param {Record<string, any>} [raw]
  */
 export function normalizeServerEntry(raw = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {

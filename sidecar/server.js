@@ -426,7 +426,7 @@ function listenWithFallback(startPort = PORT_MIN, maxPort = PORT_MAX) {
 
     const tryPort = () => {
       const server = http.createServer(app);
-      server.once('error', (err) => {
+      server.once('error', (/** @type {NodeJS.ErrnoException} */ err) => {
         if (err.code === 'EADDRINUSE' && port < maxPort) {
           console.error(`[Switchboard] Port ${port} in use, trying ${port + 1}...`);
           port += 1;

@@ -1,37 +1,26 @@
-/**
- * Native Tauri v2 In-App Updater Client
- * Handles update checking, download progress, error recovery, and seamless restart.
- */
+import type { Update } from '@tauri-apps/plugin-updater';
+import type { UpdateCheckResult, UpdateProgress } from './types';
 
-let activeUpdate = null;
+let activeUpdate: Update | null = null;
 
-export const isTauriDesktop = () => {
+export const isTauriDesktop = (): boolean => {
   return typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__);
 };
 
-export async function getAppVersion() {
-  if (!isTauriDesktop()) return '1.0.0';
+export async function getAppVersion(): Promise<string> {
+  if (!isTauriDesktop()) return '1.0.1';
   try {
     const { getVersion } = await import('@tauri-apps/api/app');
     return await getVersion();
   } catch {
-    return '1.0.0';
+    return '1.0.1';
   }
 }
 
 /**
  * Checks for updates against configured release endpoints.
- * @param {boolean} manual Whether this check was triggered manually by user click
- * @returns {Promise<{
- *   status: 'available' | 'latest' | 'error' | 'unsupported',
- *   version?: string,
- *   currentVersion?: string,
- *   date?: string,
- *   body?: string,
- *   error?: string
- * }>}
  */
-export async function checkForAppUpdate(manual = false) {
+export async function checkForAppUpdate(_manual = false): Promise<UpdateCheckResult> {
   if (!isTauriDesktop()) {
     return {
       status: 'unsupported',
@@ -65,9 +54,8 @@ export async function checkForAppUpdate(manual = false) {
     };
   } catch (err) {
     activeUpdate = null;
-    const msg = err?.message || String(err);
+    const msg = err instanceof Error ? err.message : String(err);
 
-    // Gracefully handle common network / endpoint states
     let userMsg = 'Unable to check for updates.';
     if (msg.includes('404') || msg.includes('Could not resolve') || msg.includes('Failed to fetch')) {
       userMsg = 'Update server currently unreachable or offline.';
@@ -86,9 +74,8 @@ export async function checkForAppUpdate(manual = false) {
 
 /**
  * Downloads and installs the active update with real-time progress callbacks.
- * @param {(progress: { percent: number, downloaded: number, total: number }) => void} onProgress
  */
-export async function installAppUpdate(onProgress = () => {}) {
+export async function installAppUpdate(onProgress: (progress: UpdateProgress) => void = () => {}): Promise<void> {
   if (!activeUpdate) {
     throw new Error('No active update available to install.');
   }
@@ -99,10 +86,10 @@ export async function installAppUpdate(onProgress = () => {}) {
   try {
     await activeUpdate.downloadAndInstall((event) => {
       if (event.event === 'Started') {
-        totalBytes = event.data?.contentLength || 0;
+        totalBytes = event.data?.contentLength ?? 0;
         onProgress({ percent: 0, downloaded: 0, total: totalBytes });
       } else if (event.event === 'Progress') {
-        downloadedBytes += event.data?.chunkLength || 0;
+        downloadedBytes += event.data?.chunkLength ?? 0;
         const percent = totalBytes > 0 ? Math.min(100, Math.round((downloadedBytes / totalBytes) * 100)) : 0;
         onProgress({ percent, downloaded: downloadedBytes, total: totalBytes });
       } else if (event.event === 'Finished') {
@@ -110,6 +97,6 @@ export async function installAppUpdate(onProgress = () => {}) {
       }
     });
   } catch (err) {
-    throw new Error(err?.message || 'Failed to download and install update.');
+    throw new Error(err instanceof Error ? err.message : 'Failed to download and install update.');
   }
 }

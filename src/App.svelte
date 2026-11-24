@@ -1,10 +1,10 @@
-<script>
+<script lang="ts">
   import { onMount } from 'svelte';
   import { fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import StreamlineIcon from './lib/icons/StreamlineIcon.svelte';
   import Button from './lib/primitives/Button.svelte';
-  import { api, discoverSidecarBaseUrl, subscribeEvents } from './lib/api.js';
+  import { api, discoverSidecarBaseUrl, subscribeEvents } from './lib/api';
   import TopConnectionBar from './components/TopConnectionBar.svelte';
   import TelemetryStrip from './components/TelemetryStrip.svelte';
   import SwitchboardList from './components/SwitchboardList.svelte';
@@ -13,36 +13,46 @@
   import LogViewerModal from './components/LogViewerModal.svelte';
   import HelpDrawer from './components/HelpDrawer.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
-  import { checkForAppUpdate, isTauriDesktop } from './lib/updater.js';
+  import { checkForAppUpdate, isTauriDesktop } from './lib/updater';
+  import type {
+    AppState,
+    LiveLogEvent,
+    McpServerSnapshot,
+    ServerSavePayload,
+    SwitchboardSettings,
+    ThemeMode,
+    ToastMessage,
+    UpdateCheckResult,
+  } from './lib/types';
 
-  let appState = $state(null);
+  let appState = $state<AppState | null>(null);
   let connecting = $state(true);
-  let connectionError = $state(null);
-  let availableUpdate = $state(null);
-  let theme = $state(
-    typeof localStorage !== 'undefined'
-      ? localStorage.getItem('mcp-switchboard-theme') || 'dark'
+  let connectionError = $state<string | null>(null);
+  let availableUpdate = $state<UpdateCheckResult | null>(null);
+  let theme = $state<ThemeMode>(
+    typeof localStorage !== 'undefined' && localStorage.getItem('mcp-switchboard-theme') === 'light'
+      ? 'light'
       : 'dark'
   );
 
-  let busyServers = $state({});
+  let busyServers = $state<Record<string, boolean>>({});
   let tunnelBusy = $state(false);
-  let searchInputEl = $state(null);
+  let searchInputEl = $state<HTMLInputElement | null>(null);
 
   // Modals & Drawers
   let addModalOpen = $state(false);
-  let editingServer = $state(null);
-  let inspectingServer = $state(null);
-  let logServer = $state(null);
-  let liveLogEvent = $state(null);
+  let editingServer = $state<McpServerSnapshot | null>(null);
+  let inspectingServer = $state<McpServerSnapshot | null>(null);
+  let logServer = $state<McpServerSnapshot | null>(null);
+  let liveLogEvent = $state<LiveLogEvent | null>(null);
   let helpOpen = $state(false);
   let settingsOpen = $state(false);
 
   // Toast
-  let toast = $state(null);
-  let toastTimer = null;
+  let toast = $state<ToastMessage | null>(null);
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
-  function notify(message, type = 'info') {
+  function notify(message: string, type: 'info' | 'error' = 'info'): void {
     toast = { message, type, id: Date.now() };
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
@@ -60,9 +70,9 @@
     localStorage.setItem('mcp-switchboard-theme', theme);
   });
 
-  let cleanupSse = null;
+  let cleanupSse: (() => void) | null = null;
 
-  async function connectToSidecar() {
+  async function connectToSidecar(): Promise<boolean> {
     connecting = true;
     connectionError = null;
     try {
@@ -84,7 +94,7 @@
       connecting = false;
       return true;
     } catch (err) {
-      connectionError = err.message || 'Unable to connect to MCP Switchboard engine.';
+      connectionError = err instanceof Error ? err.message : 'Unable to connect to MCP Switchboard engine.';
       connecting = false;
       return false;
     }
@@ -93,24 +103,23 @@
   onMount(() => {
     let cancelled = false;
 
-    // 1. Prevent browser context menu on non-input UI elements
-    function handleContextMenu(e) {
-      const isInput = e.target?.tagName === 'INPUT' || e.target?.tagName === 'TEXTAREA' || e.target?.isContentEditable;
+    function handleContextMenu(e: MouseEvent): void {
+      const target = e.target as HTMLElement | null;
+      const isInput =
+        target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || Boolean(target?.isContentEditable);
       if (!isInput) {
         e.preventDefault();
       }
     }
 
-    // 2. Prevent accidental file drop navigating the desktop webview
-    function handleDragOver(e) {
+    function handleDragOver(e: DragEvent): void {
       e.preventDefault();
     }
-    function handleDrop(e) {
+    function handleDrop(e: DragEvent): void {
       e.preventDefault();
     }
 
-    // 3. Prevent Ctrl+Wheel zoom
-    function handleWheel(e) {
+    function handleWheel(e: WheelEvent): void {
       if (e.ctrlKey) {
         e.preventDefault();
       }
@@ -121,20 +130,18 @@
     window.addEventListener('drop', handleDrop);
     window.addEventListener('wheel', handleWheel, { passive: false });
 
-    // 4. Background update check (quiet, after 3.5s)
-    const updateTimer = setTimeout(async () => {
+    const updateTimer = setTimeout(() => {
       if (cancelled) return;
-      try {
-        const res = await checkForAppUpdate(false);
-        if (res.status === 'available') {
-          availableUpdate = res;
-        }
-      } catch {
-        // Quiet ignore background check failures
-      }
+      void checkForAppUpdate(false)
+        .then((res) => {
+          if (!cancelled && res.status === 'available') {
+            availableUpdate = res;
+          }
+        })
+        .catch(() => {});
     }, 3500);
 
-    connectToSidecar().then(() => {
+    void connectToSidecar().then(() => {
       if (cancelled) cleanupSse?.();
     });
 
@@ -151,8 +158,7 @@
     };
   });
 
-  function handleGlobalShortcut(e) {
-    // Intercept native browser reload & print shortcuts
+  function handleGlobalShortcut(e: KeyboardEvent): void {
     if (e.key === 'F5' || ((e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R'))) {
       e.preventDefault();
       return;
@@ -167,8 +173,9 @@
       return;
     }
 
-    const tag = e.target?.tagName;
-    const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable;
+    const target = e.target as HTMLElement | null;
+    const tag = target?.tagName;
+    const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(target?.isContentEditable);
     const anyModalOpen = addModalOpen || settingsOpen || helpOpen || Boolean(inspectingServer) || Boolean(logServer);
 
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -189,63 +196,63 @@
     }
   }
 
-  async function handleToggleTunnel(enable) {
+  async function handleToggleTunnel(enable: boolean): Promise<void> {
     tunnelBusy = true;
     try {
       const res = enable ? await api.startTunnel() : await api.stopTunnel();
       if (res.state) appState = res.state;
       if (!enable) notify('Cloudflare Tunnel stopped');
     } catch (err) {
-      notify(err.message, 'error');
+      notify(err instanceof Error ? err.message : String(err), 'error');
     } finally {
       tunnelBusy = false;
     }
   }
 
-  async function handleToggleServer(name, enable) {
+  async function handleToggleServer(name: string, enable: boolean): Promise<void> {
     busyServers = { ...busyServers, [name]: true };
     try {
       const res = await api.toggleServer(name, enable);
       if (res.state) appState = res.state;
     } catch (err) {
-      notify(err.message, 'error');
+      notify(err instanceof Error ? err.message : String(err), 'error');
     } finally {
       busyServers = { ...busyServers, [name]: false };
     }
   }
 
-  async function handleImportJson(jsonText) {
+  async function handleImportJson(jsonText: string): Promise<void> {
     const res = await api.importJson(jsonText);
     if (res.state) appState = res.state;
     const count = res.imported?.length || 1;
     notify(`Imported ${count} MCP ${count === 1 ? 'server' : 'servers'}`);
   }
 
-  async function handleSaveServer(payload) {
+  async function handleSaveServer(payload: ServerSavePayload): Promise<void> {
     const res = await api.saveServer(payload);
     if (res.state) appState = res.state;
     notify(payload.originalName ? `Updated ${payload.name}` : `Added ${payload.name}`);
   }
 
-  async function handleDeleteServer(server) {
+  async function handleDeleteServer(server: McpServerSnapshot): Promise<void> {
     try {
       const res = await api.deleteServer(server.name);
       if (res.state) appState = res.state;
       notify(`Removed ${server.name}`);
     } catch (err) {
-      notify(err.message, 'error');
+      notify(err instanceof Error ? err.message : String(err), 'error');
     }
   }
 
-  async function handleSaveSettings(patch) {
+  async function handleSaveSettings(patch: Partial<SwitchboardSettings>): Promise<void> {
     const res = await api.updateSettings(patch);
     if (res.state) appState = res.state;
     notify('Settings saved');
   }
 
-  function handleToggleTheme() {
+  function handleToggleTheme(): void {
     theme = theme === 'dark' ? 'light' : 'dark';
-    api.updateSettings({ theme }).catch(() => {});
+    void api.updateSettings({ theme }).catch(() => {});
   }
 </script>
 
