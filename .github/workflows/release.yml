@@ -96,7 +96,7 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           tagName: v__VERSION__
           releaseName: 'MCP Switchboard v__VERSION__'
-          releaseBody: 'Automated multi-platform release of MCP Switchboard v__VERSION__ with signed in-app OTA updater support.'
+          releaseBody: 'Automated multi-platform release of MCP Switchboard with signed in-app OTA updater support.'
           releaseDraft: ${{ needs.create-release.outputs.is_draft == 'true' }}
           prerelease: false
           updaterJsonPreferNsis: true

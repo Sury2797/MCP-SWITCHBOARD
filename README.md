@@ -20,7 +20,23 @@
   </p>
 
   <p>
+    <a href="https://github.com/Sury2797/MCP-SWITCHBOARD/releases/download/v1.0.2/MCP.Switchboard_1.0.2_x64-setup.exe">
+      <img src="https://img.shields.io/badge/Windows_x64-.exe_(2.27_MB)-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Download Windows x64 Setup (.exe)" />
+    </a>
+    <a href="https://github.com/Sury2797/MCP-SWITCHBOARD/releases/download/v1.0.2/MCP.Switchboard_1.0.2_aarch64.dmg">
+      <img src="https://img.shields.io/badge/macOS_Apple_Silicon-.dmg_(6.24_MB)-18181b?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Apple Silicon (.dmg)" />
+    </a>
+    <a href="https://github.com/Sury2797/MCP-SWITCHBOARD/releases/download/v1.0.2/MCP.Switchboard_1.0.2_x64.dmg">
+      <img src="https://img.shields.io/badge/macOS_Intel-.dmg_(6.34_MB)-3f3f46?style=for-the-badge&logo=apple&logoColor=white" alt="Download macOS Intel (.dmg)" />
+    </a>
+    <a href="https://github.com/Sury2797/MCP-SWITCHBOARD/releases/download/v1.0.2/MCP.Switchboard_1.0.2_amd64.AppImage">
+      <img src="https://img.shields.io/badge/Linux_x64-.AppImage-E95420?style=for-the-badge&logo=linux&logoColor=white" alt="Download Linux x64 AppImage" />
+    </a>
+  </p>
+
+  <p>
     <a href="#quick-start">Quick Start</a> &nbsp;·&nbsp;
+    <a href="#downloads">Downloads</a> &nbsp;·&nbsp;
     <a href="#architecture">Architecture</a> &nbsp;·&nbsp;
     <a href="#configuration--examples">Configuration</a> &nbsp;·&nbsp;
     <a href="#security-model">Security Model</a> &nbsp;·&nbsp;
@@ -75,10 +91,19 @@ flowchart LR
 
 ### Platform Installers & Persistent Config Locations
 
+<a id="downloads"></a>
+
+| Platform | Direct Download Badges (`v1.0.2`) | Persistent Config Path |
+| :--- | :--- | :--- |
+| **Windows (x64)** | <a href="https://github.com/Sury2797/MCP-SWITCHBOARD/releases/download/v1.0.2/MCP.Switchboard_1.0.2_x64-setup.exe"><img src="https://img.shields.io/badge/Setup_.exe-2.27_MB-0078D4?style=flat-square&logo=windows&logoColor=white" alt="Windows Setup EXE" /></a> <a href="https://github.com/Sury2797/MCP-SWITCHBOARD/releases/download/v1.0.2/MCP.Switchboard_1.0.2_x64_en-US.msi"><img src="https://img.shields.io/badge/MSI_Installer-3.14_MB-0369a1?style=flat-square" alt="Windows MSI" /></a> | `%APPDATA%\com.mcpswitchboard.desktop\mcp-switchboard.json` |
+| **macOS (Apple Silicon & Intel)** | <a href="https://github.com/Sury2797/MCP-SWITCHBOARD/releases/download/v1.0.2/MCP.Switchboard_1.0.2_aarch64.dmg"><img src="https://img.shields.io/badge/ARM64_.dmg-6.24_MB-18181b?style=flat-square&logo=apple&logoColor=white" alt="macOS Apple Silicon DMG" /></a> <a href="https://github.com/Sury2797/MCP-SWITCHBOARD/releases/download/v1.0.2/MCP.Switchboard_1.0.2_x64.dmg"><img src="https://img.shields.io/badge/Intel_x64_.dmg-6.34_MB-3f3f46?style=flat-square&logo=apple&logoColor=white" alt="macOS Intel DMG" /></a> | `~/Library/Application Support/com.mcpswitchboard.desktop/mcp-switchboard.json` |
+| **Linux (x64)** | <a href="https://github.com/Sury2797/MCP-SWITCHBOARD/releases/download/v1.0.2/MCP.Switchboard_1.0.2_amd64.AppImage"><img src="https://img.shields.io/badge/.AppImage-78.1_MB-E95420?style=flat-square&logo=linux&logoColor=white" alt="Linux AppImage" /></a> <a href="https://github.com/Sury2797/MCP-SWITCHBOARD/releases/download/v1.0.2/MCP.Switchboard_1.0.2_amd64.deb"><img src="https://img.shields.io/badge/.deb-3.25_MB-A81D33?style=flat-square&logo=debian&logoColor=white" alt="Linux DEB" /></a> <a href="https://github.com/Sury2797/MCP-SWITCHBOARD/releases/download/v1.0.2/MCP.Switchboard-1.0.2-1.x86_64.rpm"><img src="https://img.shields.io/badge/.rpm-3.26_MB-EE0000?style=flat-square&logo=redhat&logoColor=white" alt="Linux RPM" /></a> | `~/.config/com.mcpswitchboard.desktop/mcp-switchboard.json` |
+| **Signed OTA Feed** | <a href="https://github.com/Sury2797/MCP-SWITCHBOARD/releases/latest/download/latest.json"><img src="https://img.shields.io/badge/latest.json-Minisign_Verified-10b981?style=flat-square" alt="Signed Updater Feed latest.json" /></a> <a href="https://github.com/Sury2797/MCP-SWITCHBOARD/releases/tag/v1.0.2"><img src="https://img.shields.io/badge/All_Assets_%26_.sig-v1.0.2-475569?style=flat-square&logo=github&logoColor=white" alt="All v1.0.2 Release Assets" /></a> | Auto-checked on startup &amp; in Settings |
+
 <details open>
 <summary><strong>Windows (x64 — NSIS Setup / MSI)</strong></summary>
 
-1. Download **`MCP Switchboard_<version>_x64-setup.exe`** (recommended per-user installer for silent UAC-free OTA updates) or **`.msi`** from [Releases](https://github.com/Sury2797/MCP-SWITCHBOARD/releases).
+1. Download **`MCP.Switchboard_1.0.2_x64-setup.exe`** (recommended per-user installer for silent UAC-free OTA updates) or **`MCP.Switchboard_1.0.2_x64_en-US.msi`** directly above or from [Releases](https://github.com/Sury2797/MCP-SWITCHBOARD/releases).
 2. Per-user installs live under `%LOCALAPPDATA%\MCP Switchboard\`, while configuration persists safely across updates at:
    `%APPDATA%\com.mcpswitchboard.desktop\mcp-switchboard.json`
 3. Built-in Windows diagnostics read `HKCU` + `HKLM` Registry `PATH`, expand environment variables, check `NVM_SYMLINK` / `Volta` / `Scoop`, scan Python `3.x` directories, and resolve `.cmd`/`.exe` shims (`npx.cmd`, `uvx.exe`, `python.exe`, `cloudflared.exe`) with `windowsHide: true`.
@@ -88,7 +113,7 @@ flowchart LR
 <details>
 <summary><strong>macOS (Apple Silicon <code>aarch64</code> &amp; Intel <code>x86_64</code> — DMG / Updater Bundle)</strong></summary>
 
-1. Download the matching `.dmg` for your Mac (`aarch64` for M1/M2/M3/M4 or `x64` for Intel) from [Releases](https://github.com/Sury2797/MCP-SWITCHBOARD/releases) and drag **MCP Switchboard.app** to Applications.
+1. Download **`MCP.Switchboard_1.0.2_aarch64.dmg`** (M1–M4) or **`MCP.Switchboard_1.0.2_x64.dmg`** (Intel) directly above (or from [Releases](https://github.com/Sury2797/MCP-SWITCHBOARD/releases)) and drag **MCP Switchboard.app** to Applications.
 2. Persistent config path: `~/Library/Application Support/com.mcpswitchboard.desktop/mcp-switchboard.json`.
 3. Finder/Dock-launched builds automatically check `/opt/homebrew/bin`, `/usr/local/bin`, `~/.volta/bin`, `~/.local/share/fnm`, and `~/.nvm/versions/node` so `node`, `npx`, `uvx`, and `cloudflared` work without opening a login shell.
 
@@ -97,7 +122,7 @@ flowchart LR
 <details>
 <summary><strong>Linux (x64 — AppImage / .deb / .rpm)</strong></summary>
 
-1. Download `.AppImage`, `.deb`, or `.rpm` from [Releases](https://github.com/Sury2797/MCP-SWITCHBOARD/releases) (built on Ubuntu 22.04 with WebKitGTK 4.1 for broad glibc compatibility).
+1. Download **`MCP.Switchboard_1.0.2_amd64.AppImage`**, **`MCP.Switchboard_1.0.2_amd64.deb`**, or **`MCP.Switchboard-1.0.2-1.x86_64.rpm`** directly above (built on Ubuntu 22.04 with WebKitGTK 4.1 for broad glibc compatibility).
 2. Persistent config path: `~/.config/com.mcpswitchboard.desktop/mcp-switchboard.json` (or `$XDG_DATA_HOME/com.mcpswitchboard.desktop/mcp-switchboard.json`).
 3. Desktop-launched sessions automatically prepend `~/.local/bin`, `~/.cargo/bin`, `~/.volta/bin`, and `/usr/local/bin` to `PATH`.
 
