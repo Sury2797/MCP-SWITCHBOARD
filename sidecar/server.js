@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -23,14 +23,22 @@ const tunnelManager = new TunnelManager();
 
 const LOCAL_ORIGIN_RE = /^(https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?|tauri:\/\/localhost|https?:\/\/tauri\.localhost)$/i;
 const LOCAL_HOST_RE = /^(localhost|127\.0\.0\.1)(:\d+)?$/i;
+const CONTROL_TOKEN = process.env.MCP_SWITCHBOARD_CONTROL_TOKEN || '';
 
 function isLocalOrigin(origin) {
   return typeof origin === 'string' && LOCAL_ORIGIN_RE.test(origin);
 }
 
+function tokensMatch(presented, expected) {
+  if (typeof presented !== 'string' || !expected) return false;
+  const a = Buffer.from(presented, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 /**
- * Guard /api/* against public internet exposure (via Cloudflare Tunnel),
- * DNS rebinding, and cross-origin browser CSRF/RCE.
+ * Guard /api/* against public internet exposure (Cloudflare Tunnel),
+ * DNS rebinding, cross-origin browser CSRF/RCE, and unauthenticated local callers.
  */
 function requireLocalControlOrigin(req, res, next) {
   if (
@@ -51,6 +59,14 @@ function requireLocalControlOrigin(req, res, next) {
   const origin = req.headers.origin;
   if (origin && !isLocalOrigin(origin)) {
     return res.status(403).json({ error: 'Origin not allowed for local Control API.' });
+  }
+
+  // CORS preflight requests do not carry custom auth headers
+  if (req.method !== 'OPTIONS' && CONTROL_TOKEN) {
+    const presented = req.headers['x-switchboard-token'] || (req.path === '/events' ? req.query?.token : '');
+    if (!tokensMatch(presented, CONTROL_TOKEN)) {
+      return res.status(401).json({ error: 'Unauthorized Control API request.' });
+    }
   }
 
   next();

@@ -61,11 +61,23 @@ async function mcpRpc(port, body, sessionId = null) {
   return { status: res.status, sessionId: nextSession, json };
 }
 
+const TEST_TOKEN = 'e2e-rust-enforced-session-token-0123456789abcdef';
+
 async function run() {
   const sidecar = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
-    env: { ...process.env, MCP_SWITCHBOARD_DATA_DIR: tmpDir, PORT: '8005' },
+    env: {
+      ...process.env,
+      MCP_SWITCHBOARD_DATA_DIR: tmpDir,
+      PORT: '8005',
+      MCP_SWITCHBOARD_CONTROL_TOKEN: TEST_TOKEN,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+
+  const apiHeaders = {
+    'Content-Type': 'application/json',
+    'X-Switchboard-Token': TEST_TOKEN,
+  };
 
   try {
     const port = await waitForReady(sidecar);
@@ -76,26 +88,34 @@ async function run() {
     assert.equal(health.ok, true);
     assert.equal(health.totalTools, 0);
 
-    // 1b. Security checks: /api/* must reject tunnel proxy headers, foreign origins, and unsafe names
+    // 1b. Security checks: /api/* must reject tunnel headers, foreign origins, missing/bad tokens, & non-HTTP URLs
+    const noTokenRes = await fetch(`http://127.0.0.1:${port}/api/state`);
+    assert.equal(noTokenRes.status, 401, 'Control API must reject unauthenticated callers when token is enforced');
+
+    const badTokenRes = await fetch(`http://127.0.0.1:${port}/api/state`, {
+      headers: { 'X-Switchboard-Token': 'wrong-token' },
+    });
+    assert.equal(badTokenRes.status, 401, 'Control API must reject invalid session tokens');
+
     const tunneledApi = await fetch(`http://127.0.0.1:${port}/api/state`, {
-      headers: { 'cf-ray': 'fake-tunnel-ray' },
+      headers: { 'cf-ray': 'fake-tunnel-ray', 'X-Switchboard-Token': TEST_TOKEN },
     });
     assert.equal(tunneledApi.status, 403, 'Control API must reject Cloudflare Tunnel traffic');
 
     const foreignOrigin = await fetch(`http://127.0.0.1:${port}/api/servers`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+      headers: { ...apiHeaders, Origin: 'https://evil.example' },
       body: JSON.stringify({ name: 'evil', command: 'node', args: ['-v'] }),
     });
     assert.equal(foreignOrigin.status, 403, 'Control API must reject untrusted web origins');
 
     const badUrlRes = await fetch(`http://127.0.0.1:${port}/api/servers`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders,
       body: JSON.stringify({ name: 'badurl', transport: 'sse', url: 'file:///etc/passwd' }),
     });
     assert.equal(badUrlRes.status, 400, 'Server validation must reject non-HTTP URLs');
-    console.log('[E2E] Verified local-only Control API & input validation security');
+    console.log('[E2E] Verified Rust-enforced session token, local-only Control API, & URL validation');
 
     // 2. Import sample stdio MCP via Paste JSON endpoint
     const sampleScript = path.join(__dirname, 'sample-mcp-server.mjs');
@@ -111,7 +131,7 @@ async function run() {
     const importRes = await (
       await fetch(`http://127.0.0.1:${port}/api/servers/import`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: apiHeaders,
         body: JSON.stringify({ jsonText: jsonSnippet }),
       })
     ).json();
@@ -122,7 +142,7 @@ async function run() {
     const onRes = await (
       await fetch(`http://127.0.0.1:${port}/api/servers/sample_stdio/toggle`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: apiHeaders,
         body: JSON.stringify({ enabled: true }),
       })
     ).json();
@@ -171,7 +191,7 @@ async function run() {
     const offRes = await (
       await fetch(`http://127.0.0.1:${port}/api/servers/sample_stdio/toggle`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: apiHeaders,
         body: JSON.stringify({ enabled: false }),
       })
     ).json();

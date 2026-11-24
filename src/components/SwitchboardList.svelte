@@ -78,8 +78,22 @@
           bind:value={query}
           placeholder="Filter servers or commands…"
           aria-label="Filter MCP servers"
-          class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 pl-9 pr-3 text-xs text-graphite-900 dark:text-graphite-100 placeholder:text-graphite-400 dark:placeholder:text-graphite-500 shadow-xs focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none transition-colors"
+          class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 pl-9 pr-14 text-xs text-graphite-900 dark:text-graphite-100 placeholder:text-graphite-400 dark:placeholder:text-graphite-500 shadow-xs focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none transition-colors"
         />
+        {#if query}
+          <button
+            type="button"
+            onclick={() => (query = '')}
+            aria-label="Clear filter"
+            class="absolute right-2 top-1/2 -translate-y-1/2 h-5 w-5 rounded flex items-center justify-center text-graphite-400 hover:text-graphite-700 dark:hover:text-graphite-200 hover:bg-graphite-100 dark:hover:bg-graphite-800 transition-colors"
+          >
+            <StreamlineIcon name="X" size={11} />
+          </button>
+        {:else}
+          <kbd class="hidden sm:inline-flex items-center absolute right-2 top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded border border-graphite-200 dark:border-graphite-800 bg-graphite-50 dark:bg-graphite-900 font-mono text-[10px] text-graphite-400 dark:text-graphite-500 pointer-events-none">
+            Ctrl F
+          </kbd>
+        {/if}
       </div>
 
       <div class="shrink-0 overflow-x-auto">
@@ -114,8 +128,20 @@
       </div>
     </div>
   {:else if filtered.length === 0}
-    <div class="rounded-xl border border-graphite-200 dark:border-graphite-800 bg-white dark:bg-graphite-900/60 p-8 text-center text-xs text-graphite-500">
-      No servers match this filter.
+    <div class="board-surface rounded-xl border border-graphite-200 dark:border-graphite-800 bg-white dark:bg-graphite-900/60 p-8 text-center space-y-2.5">
+      <p class="text-xs text-graphite-500 dark:text-graphite-400">
+        No servers match {query.trim() ? `"${query.trim()}"` : 'this filter'}.
+      </p>
+      <Button
+        variant="ghost"
+        size="xs"
+        onclick={() => {
+          query = '';
+          filterTab = 'all';
+        }}
+      >
+        Reset filter
+      </Button>
     </div>
   {:else}
     <div class="board-surface divide-y divide-graphite-200 dark:divide-graphite-800/90 rounded-xl border border-graphite-200 dark:border-graphite-800 bg-white dark:bg-graphite-900 overflow-hidden">

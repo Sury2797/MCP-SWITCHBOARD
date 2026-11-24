@@ -1,4 +1,5 @@
 let baseUrl = 'http://127.0.0.1:8000';
+let controlToken = '';
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -13,13 +14,16 @@ export async function discoverSidecarBaseUrl({ maxAttempts = 35, intervalMs = 25
   const isTauri = typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__);
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    // 1. If running in Tauri, check Rust shell for spawn failure or ready port
+    // 1. If running in Tauri, check Rust shell for spawn failure, session token, and ready port
     if (isTauri) {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
         const spawnError = await invoke('get_sidecar_error');
         if (spawnError) {
           throw new Error(spawnError);
+        }
+        if (!controlToken) {
+          controlToken = (await invoke('get_sidecar_token')) || '';
         }
         const port = await invoke('get_sidecar_port');
         if (port && Number(port) >= 8000) {
@@ -81,7 +85,11 @@ export function getSidecarBaseUrl() {
 
 async function request(path, options = {}) {
   const res = await fetch(`${baseUrl}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(controlToken ? { 'X-Switchboard-Token': controlToken } : {}),
+      ...(options.headers || {}),
+    },
     ...options,
   });
   const data = await res.json().catch(() => ({}));
@@ -119,7 +127,10 @@ export const api = {
 };
 
 export function subscribeEvents({ onState, onLog, onTunnelLog, onError }) {
-  const es = new EventSource(`${baseUrl}/api/events`);
+  const sseUrl = controlToken
+    ? `${baseUrl}/api/events?token=${encodeURIComponent(controlToken)}`
+    : `${baseUrl}/api/events`;
+  const es = new EventSource(sseUrl);
   es.addEventListener('state', (e) => {
     try { onState?.(JSON.parse(e.data)); } catch {}
   });

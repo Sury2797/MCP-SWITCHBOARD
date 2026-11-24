@@ -53,7 +53,7 @@
   {title}
   aria-label={ariaLabel}
   {onclick}
-  class="inline-flex items-center justify-center font-medium select-none shrink-0 transition-[background-color,border-color,color,opacity] duration-150 disabled:opacity-40 disabled:pointer-events-none {sizeClass} {variantClass} {className}"
+  class="inline-flex items-center justify-center font-medium select-none shrink-0 transition-[background-color,border-color,color,opacity,transform] duration-150 active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none {sizeClass} {variantClass} {className}"
 >
   {@render children()}
 </button>

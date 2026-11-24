@@ -81,8 +81,13 @@
       <div class="flex items-center gap-2 sm:gap-3 shrink-0">
         <!-- Master Tunnel Control -->
         <div class="flex items-center gap-2 pr-0.5 sm:pr-1">
-          <span class="hidden md:inline-flex items-center gap-1.5 text-xs font-medium {statusMeta.textCls}">
-            <span class="h-1.5 w-1.5 rounded-full {statusMeta.dot}"></span>
+          <span aria-live="polite" class="hidden md:inline-flex items-center gap-1.5 text-xs font-medium {statusMeta.textCls}">
+            <span class="relative flex h-2 w-2 items-center justify-center">
+              {#if isLive}
+                <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60"></span>
+              {/if}
+              <span class="relative h-1.5 w-1.5 rounded-full {statusMeta.dot}"></span>
+            </span>
             {statusMeta.text}
           </span>
           <Switch

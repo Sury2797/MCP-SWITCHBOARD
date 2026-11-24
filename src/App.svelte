@@ -289,20 +289,28 @@
   <main class="flex-1 overflow-y-auto overscroll-contain w-full">
     <div class="mx-auto max-w-6xl px-4 sm:px-8 py-5 sm:py-6 space-y-4 sm:space-y-6">
       {#if connecting}
-        <div class="rounded-2xl border border-graphite-200/80 dark:border-graphite-800/80 bg-white/70 dark:bg-graphite-900/70 backdrop-blur-md p-10 text-center max-w-md mx-auto my-12 shadow-xl animate-fade-in flex flex-col items-center gap-4">
-          <div class="relative w-12 h-12 flex items-center justify-center">
-            <div class="absolute inset-0 rounded-full border-2 border-emerald-500/25 border-t-emerald-500 animate-spin"></div>
-            <div class="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-500">
-              <StreamlineIcon name="Server" size={16} />
-            </div>
+        <div class="space-y-4 sm:space-y-6 animate-fade-in">
+          <div class="board-surface grid grid-cols-2 sm:grid-cols-3 rounded-xl border border-graphite-200 dark:border-graphite-800 bg-white dark:bg-graphite-900 overflow-hidden opacity-75">
+            {#each [0, 1, 2] as idx (idx)}
+              <div class="px-4 sm:px-6 py-4 space-y-2 {idx < 2 ? 'sm:border-r border-graphite-200 dark:border-graphite-800' : 'col-span-2 sm:col-span-1 border-t sm:border-t-0'}">
+                <div class="h-3 w-20 rounded bg-graphite-200/70 dark:bg-graphite-800 animate-pulse"></div>
+                <div class="h-6 w-14 rounded bg-graphite-200 dark:bg-graphite-800/80 animate-pulse"></div>
+              </div>
+            {/each}
           </div>
-          <div>
-            <h3 class="text-sm font-semibold text-graphite-900 dark:text-graphite-100">
-              Initializing MCP Switchboard Engine
-            </h3>
-            <p class="text-xs text-graphite-500 dark:text-graphite-400 mt-1">
-              Binding local process bridge and discovering tools…
-            </p>
+          <div class="board-surface rounded-xl border border-graphite-200 dark:border-graphite-800 bg-white dark:bg-graphite-900/80 p-8 text-center flex flex-col items-center gap-3">
+            <div class="relative w-10 h-10 flex items-center justify-center">
+              <div class="absolute inset-0 rounded-full border-2 border-emerald-500/20 border-t-emerald-500 animate-spin"></div>
+              <StreamlineIcon name="Server" size={15} class="text-emerald-500" />
+            </div>
+            <div>
+              <h3 class="text-sm font-semibold text-graphite-900 dark:text-graphite-100">
+                Connecting to MCP Switchboard Engine
+              </h3>
+              <p class="text-xs text-graphite-500 dark:text-graphite-400 mt-1">
+                Binding local process bridge and verifying tool list…
+              </p>
+            </div>
           </div>
         </div>
       {:else if connectionError && !appState}

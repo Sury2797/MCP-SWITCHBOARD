@@ -34,8 +34,20 @@
   }
 
   function handleKeydown(e) {
-    if (e.key === 'Escape' && open) {
+    if (!open) return;
+    if (e.key === 'Escape') {
       e.stopPropagation();
+      open = false;
+      return;
+    }
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && options.length > 0) {
+      e.preventDefault();
+      const idx = options.findIndex((o) => o.value === value);
+      const step = e.key === 'ArrowDown' ? 1 : -1;
+      const nextIdx = (idx + step + options.length) % options.length;
+      onchange(options[nextIdx].value);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
       open = false;
     }
   }
@@ -112,7 +124,7 @@
             <div class="flex items-center gap-2">
               <span class="truncate">{opt.label}</span>
               {#if opt.badge}
-                <span class="rounded px-1.5 py-0.2 font-mono text-[9px] font-semibold uppercase {isSelected ? 'bg-sky-200/60 text-sky-800 dark:bg-sky-900 dark:text-sky-300' : 'bg-graphite-100 text-graphite-600 dark:bg-graphite-800 dark:text-graphite-400'}">
+                <span class="rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase {isSelected ? 'bg-sky-200/60 text-sky-800 dark:bg-sky-900 dark:text-sky-300' : 'bg-graphite-100 text-graphite-600 dark:bg-graphite-800 dark:text-graphite-400'}">
                   {opt.badge}
                 </span>
               {/if}
