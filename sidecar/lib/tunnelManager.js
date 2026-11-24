@@ -100,7 +100,7 @@ export class TunnelManager extends EventEmitter {
 
     this._pushLog('system', `Starting cloudflared (${this.mode} mode) -> http://localhost:${localPort}`);
 
-    const proc = spawnManaged('cloudflared', args, {
+    const proc = spawnManaged(probe.binary || 'cloudflared', args, {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     this.proc = proc;

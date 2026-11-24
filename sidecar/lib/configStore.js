@@ -57,6 +57,26 @@ export function createDefaultConfig() {
   };
 }
 
+const FORBIDDEN_NAMES = new Set(['__proto__', 'constructor', 'prototype', 'toString', 'valueOf', 'hasOwnProperty']);
+const ALLOWED_SETTING_KEYS = new Set([
+  'port',
+  'theme',
+  'tunnelMode',
+  'autoStartTunnel',
+  'namedTunnelToken',
+  'namedTunnelName',
+  'namedTunnelDomain',
+]);
+
+function assertSafeServerName(rawName) {
+  const name = String(rawName || '').trim();
+  if (!name) throw new Error('Server name is required.');
+  if (FORBIDDEN_NAMES.has(name)) {
+    throw new Error(`Invalid server name: "${name}".`);
+  }
+  return name;
+}
+
 /**
  * Normalize a single server definition from either standard Claude/Cursor mcpServers JSON
  * or the Switchboard UI form into our canonical persisted shape.
@@ -90,10 +110,14 @@ export function normalizeServerEntry(raw = {}) {
   }
 
   if (hasUrl) {
+    let parsedUrl;
     try {
-      new URL(raw.url.trim());
+      parsedUrl = new URL(raw.url.trim());
     } catch {
       throw new Error(`Invalid URL: "${raw.url}"`);
+    }
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      throw new Error(`Unsupported URL protocol "${parsedUrl.protocol}". Use http:// or https://.`);
     }
   }
 
@@ -166,8 +190,7 @@ export function parsePastedMcpJson(jsonText) {
 
   const result = {};
   for (const [rawName, rawDef] of entries) {
-    const name = rawName.trim();
-    if (!name) throw new Error('Server name cannot be empty.');
+    const name = assertSafeServerName(rawName);
     result[name] = normalizeServerEntry({ ...rawDef, enabled: false });
   }
   return result;
@@ -216,9 +239,27 @@ export class ConfigStore {
   }
 
   updateSettings(patch = {}) {
+    const cleanPatch = {};
+    for (const [key, val] of Object.entries(patch || {})) {
+      if (!ALLOWED_SETTING_KEYS.has(key)) continue;
+      if (key === 'port') {
+        const parsedPort = Number(val);
+        if (Number.isInteger(parsedPort) && parsedPort >= 8000 && parsedPort <= 8010) {
+          cleanPatch.port = parsedPort;
+        }
+      } else if (key === 'theme') {
+        cleanPatch.theme = val === 'light' ? 'light' : 'dark';
+      } else if (key === 'tunnelMode') {
+        cleanPatch.tunnelMode = val === 'named' ? 'named' : 'quick';
+      } else if (key === 'autoStartTunnel') {
+        cleanPatch.autoStartTunnel = Boolean(val);
+      } else {
+        cleanPatch[key] = String(val ?? '').trim();
+      }
+    }
     this.config.settings = {
       ...this.config.settings,
-      ...patch,
+      ...cleanPatch,
     };
     this._save();
     return this.config.settings;
@@ -229,12 +270,11 @@ export class ConfigStore {
   }
 
   getServer(name) {
-    return this.config.mcpServers[name] || null;
+    return Object.hasOwn(this.config.mcpServers, name) ? this.config.mcpServers[name] : null;
   }
 
   upsertServer(name, entry) {
-    const cleanName = String(name || '').trim();
-    if (!cleanName) throw new Error('Server name is required.');
+    const cleanName = assertSafeServerName(name);
     const normalized = normalizeServerEntry(entry);
     this.config.mcpServers[cleanName] = normalized;
     this._save();
@@ -243,7 +283,8 @@ export class ConfigStore {
 
   importServers(serversMap) {
     const imported = [];
-    for (const [name, entry] of Object.entries(serversMap)) {
+    for (const [rawName, entry] of Object.entries(serversMap)) {
+      const name = assertSafeServerName(rawName);
       const normalized = normalizeServerEntry(entry);
       this.config.mcpServers[name] = normalized;
       imported.push(name);
@@ -253,14 +294,14 @@ export class ConfigStore {
   }
 
   deleteServer(name) {
-    if (!(name in this.config.mcpServers)) return false;
+    if (!Object.hasOwn(this.config.mcpServers, name)) return false;
     delete this.config.mcpServers[name];
     this._save();
     return true;
   }
 
   setServerEnabled(name, enabled) {
-    if (!(name in this.config.mcpServers)) return null;
+    if (!Object.hasOwn(this.config.mcpServers, name)) return null;
     this.config.mcpServers[name].enabled = Boolean(enabled);
     this._save();
     return this.config.mcpServers[name];

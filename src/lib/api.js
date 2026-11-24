@@ -13,10 +13,14 @@ export async function discoverSidecarBaseUrl({ maxAttempts = 35, intervalMs = 25
   const isTauri = typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__);
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    // 1. If running in Tauri, check Rust shell for ready port
+    // 1. If running in Tauri, check Rust shell for spawn failure or ready port
     if (isTauri) {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
+        const spawnError = await invoke('get_sidecar_error');
+        if (spawnError) {
+          throw new Error(spawnError);
+        }
         const port = await invoke('get_sidecar_port');
         if (port && Number(port) >= 8000) {
           const candidate = `http://127.0.0.1:${port}`;
@@ -36,7 +40,10 @@ export async function discoverSidecarBaseUrl({ maxAttempts = 35, intervalMs = 25
             // Port reported but socket still finalizing; continue retry
           }
         }
-      } catch {
+      } catch (err) {
+        if (err?.message && /node\.js|sidecar script/i.test(err.message)) {
+          throw err;
+        }
         // Fall through to probe
       }
     }

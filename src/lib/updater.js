@@ -9,6 +9,16 @@ export const isTauriDesktop = () => {
   return typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__);
 };
 
+export async function getAppVersion() {
+  if (!isTauriDesktop()) return '1.0.0';
+  try {
+    const { getVersion } = await import('@tauri-apps/api/app');
+    return await getVersion();
+  } catch {
+    return '1.0.0';
+  }
+}
+
 /**
  * Checks for updates against configured release endpoints.
  * @param {boolean} manual Whether this check was triggered manually by user click
@@ -30,15 +40,18 @@ export async function checkForAppUpdate(manual = false) {
   }
 
   try {
-    const { check } = await import('@tauri-apps/plugin-updater');
+    const [{ check }, currentVersion] = await Promise.all([
+      import('@tauri-apps/plugin-updater'),
+      getAppVersion(),
+    ]);
     const update = await check({ timeout: 12000 });
 
     if (!update) {
       activeUpdate = null;
       return {
         status: 'latest',
-        currentVersion: '1.0.0',
-        message: 'MCP Switchboard is up to date (v1.0.0).',
+        currentVersion,
+        message: `MCP Switchboard is up to date (v${currentVersion}).`,
       };
     }
 

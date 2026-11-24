@@ -3,9 +3,16 @@
   import { cubicOut } from 'svelte/easing';
   import StreamlineIcon from '../lib/icons/StreamlineIcon.svelte';
   import Button from '../lib/primitives/Button.svelte';
-  import { checkForAppUpdate, installAppUpdate } from '../lib/updater.js';
+  import { checkForAppUpdate, getAppVersion, installAppUpdate } from '../lib/updater.js';
 
   let { open = false, settings = null, configPath = '', onClose = () => {}, onSave = async () => {} } = $props();
+
+  let appVersion = $state('1.0.0');
+  $effect(() => {
+    if (open) {
+      getAppVersion().then((v) => { appVersion = v; });
+    }
+  });
 
   let tunnelMode = $state('quick');
   let autoStartTunnel = $state(false);
@@ -232,7 +239,7 @@
             <div>
               <p class="text-xs font-semibold text-graphite-900 dark:text-graphite-100">Native App Updates</p>
               <p class="text-[11px] text-graphite-500 dark:text-graphite-400 mt-0.5 font-mono">
-                Version 1.0.0 · Precision Desktop Shell
+                Version {appVersion} · Precision Desktop Shell
               </p>
             </div>
             <Button

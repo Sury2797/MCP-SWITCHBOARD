@@ -71,7 +71,7 @@
       name = editingServer.name || '';
       transport = editingServer.transport || 'stdio';
       command = editingServer.command || '';
-      argsText = (editingServer.args || []).join(' ');
+      argsText = (editingServer.args || []).map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
       url = editingServer.url || '';
       envPairs = Object.entries(editingServer.env || {}).map(([k, v]) => ({ key: k, value: v }));
       headerPairs = Object.entries(editingServer.headers || {}).map(([k, v]) => ({ key: k, value: v }));

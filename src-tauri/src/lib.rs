@@ -12,6 +12,7 @@ use tauri::{Manager, RunEvent, State, WindowEvent};
 struct SidecarState {
     child: Mutex<Option<Child>>,
     port: Arc<AtomicU16>,
+    error: Mutex<Option<String>>,
 }
 
 impl SidecarState {
@@ -84,29 +85,41 @@ fn get_sidecar_port(state: State<'_, SidecarState>) -> u16 {
     state.port.load(Ordering::SeqCst)
 }
 
+#[tauri::command]
+fn get_sidecar_error(state: State<'_, SidecarState>) -> Option<String> {
+    state.error.lock().ok().and_then(|g| g.clone())
+}
+
 fn resolve_node_binary() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
-        let candidates = [
+        for candidate in [
             r"C:\Program Files\nodejs\node.exe",
             r"C:\Program Files (x86)\nodejs\node.exe",
-        ];
-        for candidate in candidates {
+        ] {
             let p = PathBuf::from(candidate);
             if p.is_file() {
                 return p;
             }
         }
-
         if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
             let p = PathBuf::from(local_app_data).join(r"Programs\nodejs\node.exe");
             if p.is_file() {
                 return p;
             }
         }
-
         if let Ok(app_data) = std::env::var("APPDATA") {
             let p = PathBuf::from(app_data).join(r"npm\node.exe");
+            if p.is_file() {
+                return p;
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        for candidate in ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"] {
+            let p = PathBuf::from(candidate);
             if p.is_file() {
                 return p;
             }
@@ -151,12 +164,16 @@ fn resolve_sidecar_script(app: &tauri::App) -> Option<PathBuf> {
     None
 }
 
-fn spawn_sidecar(app: &tauri::App, port_store: Arc<AtomicU16>) -> Option<Child> {
-    let script = resolve_sidecar_script(app)?;
-    let sidecar_dir = script.parent()?.to_path_buf();
+fn spawn_sidecar(app: &tauri::App, port_store: Arc<AtomicU16>) -> Result<Child, String> {
+    let script = resolve_sidecar_script(app)
+        .ok_or_else(|| "Bundled MCP Switchboard sidecar script was not found.".to_string())?;
+    let sidecar_dir = script
+        .parent()
+        .ok_or_else(|| "Invalid sidecar script directory.".to_string())?
+        .to_path_buf();
     let node_bin = resolve_node_binary();
 
-    let mut cmd = Command::new(node_bin);
+    let mut cmd = Command::new(&node_bin);
     cmd.arg(&script)
         .current_dir(&sidecar_dir)
         .stdout(Stdio::piped())
@@ -177,13 +194,13 @@ fn spawn_sidecar(app: &tauri::App, port_store: Arc<AtomicU16>) -> Option<Child> 
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(err) => {
-            eprintln!("[MCP Switchboard] Failed to spawn Node.js sidecar: {err}");
-            return None;
+    let mut child = cmd.spawn().map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            "Node.js is required to run the MCP Switchboard engine, but was not found on your system.".to_string()
+        } else {
+            format!("Failed to launch Node.js sidecar ({}): {err}", node_bin.display())
         }
-    };
+    })?;
 
     if let Some(stdout) = child.stdout.take() {
         std::thread::spawn(move || {
@@ -198,7 +215,7 @@ fn spawn_sidecar(app: &tauri::App, port_store: Arc<AtomicU16>) -> Option<Child> 
         });
     }
 
-    Some(child)
+    Ok(child)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -207,17 +224,27 @@ pub fn run() {
     let sidecar_state = SidecarState {
         child: Mutex::new(None),
         port: Arc::clone(&port_store),
+        error: Mutex::new(None),
     };
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(sidecar_state)
-        .invoke_handler(tauri::generate_handler![get_sidecar_port])
+        .invoke_handler(tauri::generate_handler![get_sidecar_port, get_sidecar_error])
         .setup(move |app| {
-            let child = spawn_sidecar(app, Arc::clone(&port_store));
             let state = app.state::<SidecarState>();
-            if let Ok(mut guard) = state.child.lock() {
-                *guard = child;
+            match spawn_sidecar(app, Arc::clone(&port_store)) {
+                Ok(child) => {
+                    if let Ok(mut guard) = state.child.lock() {
+                        *guard = Some(child);
+                    }
+                }
+                Err(msg) => {
+                    eprintln!("[MCP Switchboard] {msg}");
+                    if let Ok(mut err_guard) = state.error.lock() {
+                        *err_guard = Some(msg);
+                    }
+                }
             }
             Ok(())
         })

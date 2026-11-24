@@ -8,6 +8,29 @@ const execFileAsync = promisify(execFile);
 export const IS_WIN = process.platform === 'win32';
 export const IS_MAC = process.platform === 'darwin';
 
+function expandWinEnv(value) {
+  return String(value || '').replace(/%([^%]+)%/g, (orig, key) => process.env[key] || orig);
+}
+
+function findWindowsPythonDirs(localAppData, programFiles) {
+  const dirs = [];
+  const roots = [
+    localAppData ? path.join(localAppData, 'Programs', 'Python') : null,
+    programFiles,
+  ].filter(Boolean);
+  for (const root of roots) {
+    try {
+      for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+        if (entry.isDirectory() && /^Python3\d+$/i.test(entry.name)) {
+          dirs.push(path.join(root, entry.name));
+        }
+      }
+    } catch {}
+  }
+  // Prefer newest Python 3.x version first
+  return dirs.sort().reverse();
+}
+
 /**
  * On Windows, refresh and augment process.env.PATH with user local bin, Python,
  * Node.js, and cloudflared paths. This guarantees newly installed CLI tools are
@@ -29,7 +52,6 @@ export function ensureWindowsPaths() {
     const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
     const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
 
-    // Candidate directories where Node, npx, uv, python, and cloudflared live
     const candidates = [
       path.dirname(process.execPath),
       path.join(programFiles, 'nodejs'),
@@ -37,25 +59,29 @@ export function ensureWindowsPaths() {
       home ? path.join(home, '.local', 'bin') : null,
       home ? path.join(home, '.cargo', 'bin') : null,
       localAppData ? path.join(localAppData, 'uv') : null,
-      localAppData ? path.join(localAppData, 'Programs', 'Python', 'Python313') : null,
-      localAppData ? path.join(localAppData, 'Programs', 'Python', 'Python312') : null,
-      localAppData ? path.join(localAppData, 'Programs', 'Python', 'Python311') : null,
-      localAppData ? path.join(localAppData, 'Programs', 'Python', 'Python310') : null,
+      ...findWindowsPythonDirs(localAppData, programFiles),
       localAppData ? path.join(localAppData, 'Microsoft', 'WindowsApps') : null,
       path.join(programFilesX86, 'cloudflared'),
       path.join(programFiles, 'cloudflared'),
     ].filter(Boolean);
 
-    // Try reading latest user & machine PATH from Windows registry (no admin required)
-    try {
-      const regUser = execSync('reg query "HKCU\\Environment" /v Path', { encoding: 'utf8', windowsHide: true });
-      const match = regUser.match(/Path\s+REG_[^\s]+\s+(.+)/i);
-      if (match && match[1]) {
-        for (const p of match[1].trim().split(';')) {
-          if (p && !pathSet.has(p.toLowerCase())) candidates.push(p);
+    // Read latest User + Machine PATH from Windows registry (catches newly installed tools without reboot)
+    const regKeys = [
+      'HKCU\\Environment',
+      'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment',
+    ];
+    for (const regKey of regKeys) {
+      try {
+        const regOut = execSync(`reg query "${regKey}" /v Path`, { encoding: 'utf8', windowsHide: true });
+        const match = regOut.match(/Path\s+REG_[^\s]+\s+(.+)/i);
+        if (match?.[1]) {
+          for (const rawEntry of match[1].trim().split(';')) {
+            const expanded = expandWinEnv(rawEntry.trim());
+            if (expanded && !pathSet.has(expanded.toLowerCase())) candidates.push(expanded);
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     for (const candidate of candidates) {
       if (!pathSet.has(candidate.toLowerCase()) && fs.existsSync(candidate)) {
@@ -158,9 +184,7 @@ export async function checkBinary(name, versionArgs = ['--version']) {
       candidates.push(`${name}.exe`, name);
     } else if (name === 'python' || name === 'python3') {
       const pyCandidates = [
-        path.join(localAppData, 'Programs', 'Python', 'Python313', 'python.exe'),
-        path.join(localAppData, 'Programs', 'Python', 'Python312', 'python.exe'),
-        path.join(localAppData, 'Programs', 'Python', 'Python311', 'python.exe'),
+        ...findWindowsPythonDirs(localAppData, programFiles).map((d) => path.join(d, 'python.exe')),
         'python.exe',
         'py.exe',
         'python',

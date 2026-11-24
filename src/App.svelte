@@ -60,6 +60,8 @@
     localStorage.setItem('mcp-switchboard-theme', theme);
   });
 
+  let cleanupSse = null;
+
   async function connectToSidecar() {
     connecting = true;
     connectionError = null;
@@ -70,6 +72,15 @@
       if (initial?.settings?.theme && !localStorage.getItem('mcp-switchboard-theme')) {
         theme = initial.settings.theme;
       }
+      cleanupSse?.();
+      cleanupSse = subscribeEvents({
+        onState: (nextState) => {
+          appState = nextState;
+        },
+        onLog: (logPayload) => {
+          liveLogEvent = logPayload;
+        },
+      });
       connecting = false;
       return true;
     } catch (err) {
@@ -80,7 +91,6 @@
   }
 
   onMount(() => {
-    let cleanupSse = null;
     let cancelled = false;
 
     // 1. Prevent browser context menu on non-input UI elements
@@ -124,17 +134,8 @@
       }
     }, 3500);
 
-    connectToSidecar().then((ok) => {
-      if (ok && !cancelled) {
-        cleanupSse = subscribeEvents({
-          onState: (nextState) => {
-            appState = nextState;
-          },
-          onLog: (logPayload) => {
-            liveLogEvent = logPayload;
-          },
-        });
-      }
+    connectToSidecar().then(() => {
+      if (cancelled) cleanupSse?.();
     });
 
     return () => {
@@ -142,6 +143,7 @@
       clearTimeout(toastTimer);
       clearTimeout(updateTimer);
       cleanupSse?.();
+      cleanupSse = null;
       window.removeEventListener('contextmenu', handleContextMenu);
       window.removeEventListener('dragover', handleDragOver);
       window.removeEventListener('drop', handleDrop);
@@ -314,7 +316,8 @@
             </h3>
             <p class="text-xs text-graphite-600 dark:text-graphite-400 mt-1.5 leading-relaxed">
               {#if isTauriDesktop()}
-                The background engine took longer than expected to initialize. Ensure Node.js is installed on your computer, or click Retry below.
+                {connectionError || 'The background engine took longer than expected to initialize.'}
+                Ensure Node.js is installed (<code class="px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 font-mono text-[11px]">winget install OpenJS.NodeJS.LTS</code>), then click Retry.
               {:else}
                 If running in web dev mode, start the local sidecar using <code class="px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 font-mono text-[11px]">npm run sidecar</code>.
               {/if}

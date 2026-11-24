@@ -158,6 +158,7 @@ export class McpManager extends EventEmitter {
     this._emitState();
 
     // For STDIO servers, proactively verify the binary exists so missing npx/uvx/python gives a clear hint
+    let resolvedCommand = config.command;
     if (config.transport === 'stdio') {
       const cmd = config.command;
       const isPath = cmd.includes('/') || cmd.includes('\\') || cmd.startsWith('.');
@@ -174,6 +175,9 @@ export class McpManager extends EventEmitter {
           this._emitState();
           return this.getServerSnapshot(name);
         }
+        if (probe.binary) {
+          resolvedCommand = probe.binary;
+        }
       }
     }
 
@@ -185,7 +189,7 @@ export class McpManager extends EventEmitter {
 
     const startupPromise = (async () => {
       if (config.transport === 'stdio') {
-        const resolved = resolveCommandForPlatform(config.command, config.args || []);
+        const resolved = resolveCommandForPlatform(resolvedCommand, config.args || []);
         // On Windows, StdioClientTransport passes command directly to cross-spawn / child_process.
         // Using cmd.exe /c for .cmd shims guarantees zero ENOENT errors without shell quoting bugs.
         const spawnCommand = IS_WIN && resolved.useShell ? 'cmd.exe' : resolved.command;

@@ -76,6 +76,27 @@ async function run() {
     assert.equal(health.ok, true);
     assert.equal(health.totalTools, 0);
 
+    // 1b. Security checks: /api/* must reject tunnel proxy headers, foreign origins, and unsafe names
+    const tunneledApi = await fetch(`http://127.0.0.1:${port}/api/state`, {
+      headers: { 'cf-ray': 'fake-tunnel-ray' },
+    });
+    assert.equal(tunneledApi.status, 403, 'Control API must reject Cloudflare Tunnel traffic');
+
+    const foreignOrigin = await fetch(`http://127.0.0.1:${port}/api/servers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+      body: JSON.stringify({ name: 'evil', command: 'node', args: ['-v'] }),
+    });
+    assert.equal(foreignOrigin.status, 403, 'Control API must reject untrusted web origins');
+
+    const badUrlRes = await fetch(`http://127.0.0.1:${port}/api/servers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'badurl', transport: 'sse', url: 'file:///etc/passwd' }),
+    });
+    assert.equal(badUrlRes.status, 400, 'Server validation must reject non-HTTP URLs');
+    console.log('[E2E] Verified local-only Control API & input validation security');
+
     // 2. Import sample stdio MCP via Paste JSON endpoint
     const sampleScript = path.join(__dirname, 'sample-mcp-server.mjs');
     const jsonSnippet = JSON.stringify({

@@ -21,11 +21,50 @@ const configStore = new ConfigStore();
 const mcpManager = new McpManager(configStore);
 const tunnelManager = new TunnelManager();
 
+const LOCAL_ORIGIN_RE = /^(https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?|tauri:\/\/localhost|https?:\/\/tauri\.localhost)$/i;
+const LOCAL_HOST_RE = /^(localhost|127\.0\.0\.1)(:\d+)?$/i;
+
+function isLocalOrigin(origin) {
+  return typeof origin === 'string' && LOCAL_ORIGIN_RE.test(origin);
+}
+
+/**
+ * Guard /api/* against public internet exposure (via Cloudflare Tunnel),
+ * DNS rebinding, and cross-origin browser CSRF/RCE.
+ */
+function requireLocalControlOrigin(req, res, next) {
+  if (
+    req.headers['cf-ray'] ||
+    req.headers['cf-connecting-ip'] ||
+    req.headers['x-forwarded-for'] ||
+    req.headers['x-forwarded-host'] ||
+    req.headers['forwarded']
+  ) {
+    return res.status(403).json({ error: 'Control API is local-only and blocked over tunnels/proxies.' });
+  }
+
+  const host = req.headers.host;
+  if (host && !LOCAL_HOST_RE.test(host)) {
+    return res.status(403).json({ error: 'Invalid Host header for local Control API.' });
+  }
+
+  const origin = req.headers.origin;
+  if (origin && !isLocalOrigin(origin)) {
+    return res.status(403).json({ error: 'Origin not allowed for local Control API.' });
+  }
+
+  next();
+}
+
 const app = express();
-app.use(cors({
+app.use('/mcp', cors({
   origin: true,
-  credentials: true,
   exposedHeaders: ['Mcp-Session-Id'],
+}));
+app.use('/health', cors({ origin: true }));
+app.use('/api', requireLocalControlOrigin, cors({
+  origin: (origin, cb) => cb(null, !origin || isLocalOrigin(origin)),
+  credentials: true,
 }));
 app.use(express.json({ limit: '4mb' }));
 
