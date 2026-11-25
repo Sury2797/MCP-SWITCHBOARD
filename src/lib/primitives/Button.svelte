@@ -50,13 +50,13 @@
 
   const VARIANTS: Record<ButtonVariant, string> = {
     primary:
-      'bg-graphite-950 text-graphite-50 hover:bg-graphite-800 active:bg-graphite-900 dark:bg-graphite-100 dark:text-graphite-950 dark:hover:bg-white dark:active:bg-graphite-200 border border-transparent',
+      'board-btn-primary text-white dark:text-graphite-950 border border-transparent',
     secondary:
-      'bg-white text-graphite-800 border border-graphite-200 hover:bg-graphite-100/80 hover:border-graphite-300 dark:bg-graphite-850 dark:text-graphite-200 dark:border-graphite-700 dark:hover:bg-graphite-800 dark:hover:border-graphite-600',
+      'board-btn-secondary bg-white/80 text-graphite-900 border border-graphite-950/[0.1] hover:bg-white/90 hover:border-graphite-950/[0.16] active:bg-graphite-100/80 active:scale-[0.97] dark:bg-white/[0.08] dark:text-graphite-100 dark:border-white/[0.1] dark:hover:bg-white/[0.12] dark:hover:border-white/[0.16] dark:active:bg-white/[0.15]',
     ghost:
-      'bg-transparent text-graphite-600 border border-transparent hover:bg-graphite-100 hover:text-graphite-950 dark:text-graphite-400 dark:hover:bg-graphite-800/80 dark:hover:text-graphite-100',
+      'bg-transparent text-graphite-600 border border-transparent hover:bg-graphite-950/[0.05] hover:text-graphite-950 active:bg-graphite-950/[0.08] active:scale-[0.97] dark:text-graphite-400 dark:hover:bg-white/[0.07] dark:hover:text-graphite-50 dark:active:bg-white/[0.11]',
     danger:
-      'bg-rose-500/10 text-rose-700 border border-rose-500/25 hover:bg-rose-500/15 dark:text-rose-400 dark:border-rose-500/30 dark:hover:bg-rose-500/20',
+      'bg-rose-500/10 text-rose-700 border border-rose-500/25 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)] hover:bg-rose-500/15 hover:border-rose-500/35 active:bg-rose-500/20 active:scale-[0.97] dark:bg-rose-500/[0.12] dark:text-rose-300 dark:border-rose-500/30 dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] dark:hover:bg-rose-500/20',
   };
 
   const sizeClass = $derived((SIZES[size] || SIZES.sm)[iconOnly ? 'icon' : 'default']);
@@ -69,7 +69,7 @@
   {title}
   aria-label={ariaLabel}
   {onclick}
-  class="inline-flex items-center justify-center font-medium select-none shrink-0 transition-[background-color,border-color,color,opacity,transform] duration-150 active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none {sizeClass} {variantClass} {className}"
+  class="inline-flex items-center justify-center font-medium select-none shrink-0 transition-[background-color,border-color,color,opacity,transform,box-shadow,filter] duration-150 ease-[var(--ease-spring)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-graphite-950/35 dark:focus-visible:ring-white/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface-page)] disabled:opacity-40 disabled:pointer-events-none {sizeClass} {variantClass} {className}"
 >
   {@render children()}
 </button>
