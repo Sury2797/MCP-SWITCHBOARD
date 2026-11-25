@@ -25,6 +25,31 @@ const TOOLS = [
       properties: {},
     },
   },
+  {
+    name: 'very_long_tool_name_that_exceeds_sixty_four_characters_for_compatibility_testing',
+    description: 'Verifies deterministic <= 64 character tool name truncation and routing.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+  },
+];
+
+const PROMPTS = [
+  {
+    name: 'greet',
+    description: 'Generate a short greeting prompt.',
+    arguments: [{ name: 'name', description: 'Recipient name', required: false }],
+  },
+];
+
+const RESOURCES = [
+  {
+    uri: 'sample://info',
+    name: 'Sample Server Info',
+    description: 'Metadata exposed by sample-stdio-mcp.',
+    mimeType: 'application/json',
+  },
 ];
 
 function send(msg) {
@@ -52,7 +77,7 @@ rl.on('line', (line) => {
       id,
       result: {
         protocolVersion: params?.protocolVersion || '2025-03-26',
-        capabilities: { tools: {} },
+        capabilities: { tools: {}, prompts: {}, resources: {} },
         serverInfo: { name: 'sample-stdio-mcp', version: '1.0.0' },
       },
     });
@@ -96,10 +121,67 @@ rl.on('line', (line) => {
       });
       return;
     }
+    if (toolName === 'very_long_tool_name_that_exceeds_sixty_four_characters_for_compatibility_testing') {
+      send({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [{ type: 'text', text: 'long-tool-ok' }],
+        },
+      });
+      return;
+    }
     send({
       jsonrpc: '2.0',
       id,
       error: { code: -32601, message: `Unknown tool: ${toolName}` },
+    });
+    return;
+  }
+
+  if (method === 'prompts/list') {
+    send({ jsonrpc: '2.0', id, result: { prompts: PROMPTS } });
+    return;
+  }
+
+  if (method === 'prompts/get') {
+    const target = params?.arguments?.name || 'world';
+    send({
+      jsonrpc: '2.0',
+      id,
+      result: {
+        description: 'Sample greeting',
+        messages: [{ role: 'user', content: { type: 'text', text: `Hello ${target}!` } }],
+      },
+    });
+    return;
+  }
+
+  if (method === 'resources/list') {
+    send({ jsonrpc: '2.0', id, result: { resources: RESOURCES } });
+    return;
+  }
+
+  if (method === 'resources/templates/list') {
+    send({ jsonrpc: '2.0', id, result: { resourceTemplates: [] } });
+    return;
+  }
+
+  if (method === 'resources/read') {
+    if (params?.uri === 'sample://info') {
+      send({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          contents: [{ uri: 'sample://info', mimeType: 'application/json', text: '{"ok":true}' }],
+        },
+      });
+      return;
+    }
+    send({
+      jsonrpc: '2.0',
+      id,
+      error: { code: -32002, message: `Resource not found: ${params?.uri}` },
     });
   }
 });
