@@ -3,7 +3,7 @@
   "version": "1.0.2",
   "private": true,
   "type": "module",
-  "description": "Lightweight Svelte 5 + Tauri v2 desktop MCP multiplexer and Cloudflare Tunnel switchboard for Gemini Desktop",
+  "description": "Universal setup-once MCP switchboard (Streamable HTTP, legacy SSE, STDIO bridge & Cloudflare Tunnel) for Claude Code, Cursor, VS Code, Windsurf, Zed, Claude Desktop & Gemini",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
