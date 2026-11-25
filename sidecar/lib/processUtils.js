@@ -76,7 +76,11 @@ export function ensurePlatformPaths() {
       ];
       for (const regKey of regKeys) {
         try {
-          const regOut = execSync(`reg query "${regKey}" /v Path`, { encoding: 'utf8', windowsHide: true });
+          const regOut = execSync(`reg query "${regKey}" /v Path`, {
+            encoding: 'utf8',
+            windowsHide: true,
+            timeout: 2000,
+          });
           const match = regOut.match(/Path\s+REG_[^\s]+\s+(.+)/i);
           if (match?.[1]) {
             for (const rawEntry of match[1].trim().split(';')) {
@@ -100,9 +104,15 @@ export function ensurePlatformPaths() {
       );
     }
 
-    for (const candidate of candidates) {
+    // Keep user PATH priority intact; ensure our own Node dir is present, then append fallbacks.
+    const nodeDir = candidates[0];
+    if (nodeDir && !pathSet.has(normalize(nodeDir)) && fs.existsSync(nodeDir)) {
+      paths.unshift(nodeDir);
+      pathSet.add(normalize(nodeDir));
+    }
+    for (const candidate of candidates.slice(1)) {
       if (!pathSet.has(normalize(candidate)) && fs.existsSync(candidate)) {
-        paths.unshift(candidate);
+        paths.push(candidate);
         pathSet.add(normalize(candidate));
       }
     }
@@ -114,6 +124,69 @@ export function ensurePlatformPaths() {
 ensurePlatformPaths();
 
 /**
+ * Merge extra environment variables onto process.env without creating duplicate
+ * case-divergent PATH/Path keys on Windows.
+ */
+export function mergePlatformEnv(extraEnv = {}) {
+  const merged = { ...process.env };
+  const keyMap = IS_WIN
+    ? new Map(Object.keys(merged).map((k) => [k.toUpperCase(), k]))
+    : null;
+
+  if (IS_WIN && keyMap) {
+    // Canonicalize inherited PATH key to 'PATH' so StdioClientTransport's getDefaultEnvironment() never creates a duplicate key.
+    const existingPathKey = keyMap.get('PATH');
+    if (existingPathKey && existingPathKey !== 'PATH') {
+      merged.PATH = merged[existingPathKey];
+      delete merged[existingPathKey];
+      keyMap.set('PATH', 'PATH');
+    }
+  }
+
+  for (const [rawKey, rawVal] of Object.entries(extraEnv || {})) {
+    const rawTrimmed = String(rawKey || '').trim();
+    if (!rawTrimmed) continue;
+    const key = IS_WIN && rawTrimmed.toUpperCase() === 'PATH' ? 'PATH' : rawTrimmed;
+    const val = String(rawVal ?? '');
+    if (keyMap) {
+      const existingKey = keyMap.get(key.toUpperCase());
+      if (existingKey && existingKey !== key) {
+        delete merged[existingKey];
+      }
+      keyMap.set(key.toUpperCase(), key);
+    }
+    merged[key] = val;
+  }
+  return merged;
+}
+
+/**
+ * Strip matching outer quotes if a user pasted a quoted command path.
+ */
+export function stripOuterQuotes(value) {
+  const trimmed = String(value || '').trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function quoteWinCmdArg(arg) {
+  const s = String(arg ?? '');
+  return !s || /[\s"&|<>^()%!]/.test(s)
+    ? `"${s.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`
+    : s;
+}
+
+function buildWinCmdExec(command, args = []) {
+  const cmdLine = [quoteWinCmdArg(command), ...args.map(quoteWinCmdArg)].join(' ');
+  return {
+    command: process.env.ComSpec || 'cmd.exe',
+    args: ['/d', '/s', '/c', `"${cmdLine}"`],
+  };
+}
+
+/**
  * Windows wrapper commands that require .cmd/.exe resolution or shell execution
  * to prevent ENOENT when spawned directly from Node.js.
  */
@@ -122,57 +195,171 @@ const WIN_EXE_SHIMS = new Set(['uvx', 'uv', 'python', 'python3', 'node', 'cloudf
 
 /**
  * Normalize command and spawn options for cross-platform reliability.
- * On Windows, maps `npx` -> `npx.cmd` (or invokes via cmd.exe /c when needed)
- * so child processes never throw ENOENT.
+ * Never wraps `command` in literal quotes so cross-spawn / StdioClientTransport
+ * handles paths with spaces and `.cmd` shims without double-quoting bugs.
  */
 export function resolveCommandForPlatform(command, args = []) {
-  const trimmed = String(command || '').trim();
+  const cleaned = stripOuterQuotes(command);
   if (!IS_WIN) {
-    return { command: trimmed, args: [...args], useShell: false };
+    return { command: cleaned, args: [...args], useShell: false };
   }
 
-  // If already an absolute or relative path to an executable/script
-  if (trimmed.includes('\\') || trimmed.includes('/')) {
-    const isCmd = /\.cmd$/i.test(trimmed) || /\.bat$/i.test(trimmed);
-    const cmdStr = isCmd && trimmed.includes(' ') && !trimmed.startsWith('"') ? `"${trimmed}"` : trimmed;
+  // If already an explicit path or already carries an extension
+  if (cleaned.includes('\\') || cleaned.includes('/') || /\.[a-z0-9]+$/i.test(cleaned)) {
+    const isCmd = /\.(cmd|bat)$/i.test(cleaned);
+    const hasExt = /\.[a-z0-9]+$/i.test(cleaned);
     return {
-      command: cmdStr,
+      command: cleaned,
       args: [...args],
-      useShell: isCmd,
+      useShell: isCmd || !hasExt,
     };
   }
 
-  const lower = trimmed.toLowerCase();
+  const lower = cleaned.toLowerCase();
   if (WIN_CMD_SHIMS.has(lower)) {
     return {
-      command: `${trimmed}.cmd`,
+      command: `${cleaned}.cmd`,
       args: [...args],
       useShell: true,
     };
   }
   if (WIN_EXE_SHIMS.has(lower)) {
-    const mapped = lower === 'python3' ? 'python.exe' : `${trimmed}.exe`;
+    const mapped = lower === 'python3' ? 'python.exe' : `${cleaned}.exe`;
     return {
       command: mapped,
       args: [...args],
       useShell: false,
     };
   }
-  // If the command has no extension and isn't an absolute path, allow shell lookup on Windows
-  const hasExt = /\.[a-z0-9]+$/i.test(trimmed);
   return {
-    command: trimmed,
+    command: cleaned,
     args: [...args],
-    useShell: !hasExt,
+    useShell: true,
   };
+}
+
+const NOT_FOUND_OUTPUT_RE =
+  /not recognized as an internal or external command|was not found|cannot find the path|command not found|no such file/i;
+
+function isExecutableFile(filePath) {
+  try {
+    if (!fs.statSync(filePath).isFile()) return false;
+    if (!IS_WIN) fs.accessSync(filePath, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getWinPathExts() {
+  const raw = process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD';
+  return raw.split(';').map((e) => e.trim()).filter(Boolean);
+}
+
+/**
+ * Resolve an explicit path or bare command name against PATH/PATHEXT without spawning a shell.
+ */
+export function findExecutableInPath(rawCommand) {
+  const cleaned = stripOuterQuotes(rawCommand);
+  if (!cleaned) return null;
+
+  const isExplicitPath = cleaned.includes('\\') || cleaned.includes('/') || cleaned.startsWith('.');
+  if (isExplicitPath) {
+    const abs = path.resolve(cleaned);
+    if (isExecutableFile(abs)) return abs;
+    if (IS_WIN && !/\.[a-z0-9]+$/i.test(abs)) {
+      for (const ext of getWinPathExts()) {
+        if (isExecutableFile(`${abs}${ext}`)) return `${abs}${ext}`;
+      }
+    }
+    return null;
+  }
+
+  ensurePlatformPaths();
+  const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
+  const pathDirs = String(process.env[pathKey] || '').split(path.delimiter).filter(Boolean);
+  const exts = IS_WIN && !/\.[a-z0-9]+$/i.test(cleaned) ? ['', ...getWinPathExts()] : [''];
+
+  for (const dir of pathDirs) {
+    for (const ext of exts) {
+      const candidate = path.join(dir, `${cleaned}${ext}`);
+      if (isExecutableFile(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+function getBinaryCandidates(cleanName) {
+  if (!IS_WIN) return [cleanName];
+
+  const home = process.env.USERPROFILE || '';
+  const localAppData = process.env.LOCALAPPDATA || (home ? path.join(home, 'AppData', 'Local') : '');
+  const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+  const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+
+  if (cleanName === 'npx') {
+    const directNpxCmd = path.join(path.dirname(process.execPath), 'npx.cmd');
+    return [directNpxCmd, 'npx.cmd', 'npx'];
+  }
+  if (cleanName === 'uvx' || cleanName === 'uv') {
+    const uvxLocal = home ? path.join(home, '.local', 'bin', `${cleanName}.exe`) : '';
+    return [uvxLocal, `${cleanName}.exe`, `${cleanName}.cmd`, cleanName].filter(Boolean);
+  }
+  if (cleanName === 'python' || cleanName === 'python3') {
+    return [
+      ...(cleanName === 'python3' ? ['python3.exe'] : []),
+      ...findWindowsPythonDirs(localAppData, programFiles).map((d) => path.join(d, 'python.exe')),
+      'python.exe',
+      'py.exe',
+      'python',
+    ];
+  }
+  if (cleanName === 'cloudflared') {
+    return [
+      path.join(programFilesX86, 'cloudflared', 'cloudflared.exe'),
+      path.join(programFiles, 'cloudflared', 'cloudflared.exe'),
+      'cloudflared.exe',
+      'cloudflared',
+    ];
+  }
+  return [cleanName];
+}
+
+function isWindowsAppAliasStub(filePath) {
+  return IS_WIN && filePath.toLowerCase().includes('\\microsoft\\windowsapps\\');
+}
+
+/**
+ * Resolve a bare command or known binary quickly without blocking on `--version` probes
+ * (still probes WindowsApps Store aliases so broken stubs are skipped cleanly).
+ */
+export async function resolveBinaryPath(name) {
+  const cleanName = stripOuterQuotes(name);
+  if (!cleanName) return null;
+  if (cleanName === 'node') return process.execPath;
+
+  for (const candidate of getBinaryCandidates(cleanName)) {
+    const resolved = findExecutableInPath(candidate);
+    if (!resolved) continue;
+    if (isWindowsAppAliasStub(resolved)) {
+      const check = await checkBinary(resolved, ['--version']);
+      if (!check.installed) continue;
+    }
+    return resolved;
+  }
+  return null;
 }
 
 /**
  * Check whether a binary is available in PATH (or well-known locations) and return its resolved version string.
  */
 export async function checkBinary(name, versionArgs = ['--version']) {
+  const cleanName = stripOuterQuotes(name);
+  if (!cleanName) {
+    return { installed: false, version: null, binary: cleanName };
+  }
   // If checking node itself, we are already running inside Node!
-  if (name === 'node') {
+  if (cleanName === 'node') {
     return {
       installed: true,
       version: process.version,
@@ -182,83 +369,43 @@ export async function checkBinary(name, versionArgs = ['--version']) {
 
   ensurePlatformPaths();
 
-  const candidates = [];
+  const seenPaths = new Set();
+  for (const bin of getBinaryCandidates(cleanName)) {
+    const executable = findExecutableInPath(bin);
+    if (!executable) continue;
+    const dedupeKey = IS_WIN ? executable.toLowerCase() : executable;
+    if (seenPaths.has(dedupeKey)) continue;
+    seenPaths.add(dedupeKey);
 
-  if (IS_WIN) {
-    const home = process.env.USERPROFILE || '';
-    const localAppData = process.env.LOCALAPPDATA || (home ? path.join(home, 'AppData', 'Local') : '');
-    const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
-    const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
-
-    if (name === 'npx') {
-      const nodeDir = path.dirname(process.execPath);
-      const directNpxCmd = path.join(nodeDir, 'npx.cmd');
-      if (fs.existsSync(directNpxCmd)) candidates.push(directNpxCmd);
-      candidates.push('npx.cmd', 'npx');
-    } else if (name === 'uvx' || name === 'uv') {
-      const uvxLocal = path.join(home, '.local', 'bin', `${name}.exe`);
-      if (fs.existsSync(uvxLocal)) candidates.push(uvxLocal);
-      candidates.push(`${name}.exe`, name);
-    } else if (name === 'python' || name === 'python3') {
-      const pyCandidates = [
-        ...findWindowsPythonDirs(localAppData, programFiles).map((d) => path.join(d, 'python.exe')),
-        'python.exe',
-        'py.exe',
-        'python',
-      ];
-      for (const py of pyCandidates) {
-        if (!py.includes('\\') || fs.existsSync(py)) candidates.push(py);
-      }
-    } else if (name === 'cloudflared') {
-      const cfCandidates = [
-        path.join(programFilesX86, 'cloudflared', 'cloudflared.exe'),
-        path.join(programFiles, 'cloudflared', 'cloudflared.exe'),
-        'cloudflared.exe',
-        'cloudflared',
-      ];
-      for (const cf of cfCandidates) {
-        if (!cf.includes('\\') || fs.existsSync(cf)) candidates.push(cf);
-      }
-    } else {
-      candidates.push(name);
-    }
-  } else {
-    candidates.push(name);
-  }
-
-  for (const bin of candidates) {
-    const resolved = resolveCommandForPlatform(bin, versionArgs);
+    const resolved = resolveCommandForPlatform(executable, versionArgs);
+    const execTarget = IS_WIN && resolved.useShell
+      ? buildWinCmdExec(resolved.command, resolved.args)
+      : { command: resolved.command, args: resolved.args };
     try {
-      const { stdout, stderr } = await execFileAsync(resolved.command, resolved.args, {
-        shell: resolved.useShell,
+      const { stdout, stderr } = await execFileAsync(execTarget.command, execTarget.args, {
+        windowsVerbatimArguments: IS_WIN && resolved.useShell,
         timeout: 4000,
         windowsHide: true,
       });
-      const raw = (stdout || stderr || '').trim().split(/\r?\n/)[0] || 'installed';
-      return { installed: true, version: raw.slice(0, 80), binary: bin };
+      const combined = (stdout || stderr || '').trim();
+      if (NOT_FOUND_OUTPUT_RE.test(combined)) continue;
+      const raw = combined.split(/\r?\n/)[0] || 'installed';
+      return { installed: true, version: raw.slice(0, 80), binary: executable };
     } catch (err) {
-      if (err && err.code !== 'ENOENT') {
-        const raw = ((err.stdout || '') + (err.stderr || '')).trim().split(/\r?\n/)[0];
-        if (raw) {
-          return { installed: true, version: raw.slice(0, 80), binary: bin };
-        }
-      }
-      // If direct execution failed on Windows, retry through cmd shell once
-      if (IS_WIN && !resolved.useShell) {
-        try {
-          const { stdout, stderr } = await execFileAsync(resolved.command, resolved.args, {
-            shell: true,
-            timeout: 4000,
-            windowsHide: true,
-          });
-          const raw = (stdout || stderr || '').trim().split(/\r?\n/)[0] || 'installed';
-          return { installed: true, version: raw.slice(0, 80), binary: bin };
-        } catch {}
-      }
+      const errAny = /** @type {any} */ (err);
+      if (errAny?.code === 'ENOENT' || errAny?.code === 9009) continue;
+      const combined = `${errAny?.stdout || ''}\n${errAny?.stderr || ''}`.trim();
+      if (NOT_FOUND_OUTPUT_RE.test(combined)) continue;
+      const raw = combined.split(/\r?\n/).find((l) => l.trim())?.trim();
+      return {
+        installed: true,
+        version: raw ? raw.slice(0, 80) : 'installed',
+        binary: executable,
+      };
     }
   }
 
-  return { installed: false, version: null, binary: name };
+  return { installed: false, version: null, binary: cleanName };
 }
 
 /**
@@ -365,9 +512,15 @@ export async function killProcessTree(pid, graceMs = 2000) {
  */
 export function spawnManaged(command, args = [], options = {}) {
   const resolved = resolveCommandForPlatform(command, args);
-  return spawn(resolved.command, resolved.args, {
-    ...options,
-    shell: options.shell ?? resolved.useShell,
+  const useCmdExec = IS_WIN && (options.shell ?? resolved.useShell);
+  const target = useCmdExec
+    ? buildWinCmdExec(resolved.command, resolved.args)
+    : { command: resolved.command, args: resolved.args };
+  const { shell: _ignoredShell, ...restOptions } = options;
+  return spawn(target.command, target.args, {
+    ...restOptions,
+    shell: false,
+    windowsVerbatimArguments: useCmdExec ? true : options.windowsVerbatimArguments,
     detached: !IS_WIN,
     windowsHide: true,
   });
