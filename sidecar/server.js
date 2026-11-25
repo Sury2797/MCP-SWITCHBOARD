@@ -4,16 +4,29 @@ import express from 'express';
 import cors from 'cors';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import {
   CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListResourcesRequestSchema,
+  ListResourceTemplatesRequestSchema,
   ListToolsRequestSchema,
+  ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { ConfigStore, parsePastedMcpJson } from './lib/configStore.js';
 import { McpManager } from './lib/mcpManager.js';
 import { TunnelManager } from './lib/tunnelManager.js';
 import { runDiagnostics } from './lib/diagnostics.js';
+import {
+  APP_FAVICON_ICO_BUFFER,
+  APP_ICON_128_BUFFER,
+  getMcpServerIcons,
+} from './lib/appIcon.js';
+import { runStdioBridge } from './lib/stdioBridge.js';
 
+const IS_STDIO_BRIDGE = process.argv.includes('--stdio');
 const PORT_MIN = 8000;
 const PORT_MAX = 8010;
 
@@ -21,8 +34,8 @@ const configStore = new ConfigStore();
 const mcpManager = new McpManager(configStore);
 const tunnelManager = new TunnelManager();
 
-const LOCAL_ORIGIN_RE = /^(https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?|tauri:\/\/localhost|https?:\/\/tauri\.localhost)$/i;
-const LOCAL_HOST_RE = /^(localhost|127\.0\.0\.1)(:\d+)?$/i;
+const LOCAL_ORIGIN_RE = /^(https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?|tauri:\/\/localhost|https?:\/\/tauri\.localhost)$/i;
+const LOCAL_HOST_RE = /^(localhost|127\.0\.0\.1|\[::1\]|::1)(:\d+)?$/i;
 const CONTROL_TOKEN = process.env.MCP_SWITCHBOARD_CONTROL_TOKEN || '';
 
 function isLocalOrigin(origin) {
@@ -46,6 +59,8 @@ function requireLocalControlOrigin(req, res, next) {
     req.headers['cf-connecting-ip'] ||
     req.headers['x-forwarded-for'] ||
     req.headers['x-forwarded-host'] ||
+    req.headers['x-real-ip'] ||
+    req.headers['via'] ||
     req.headers['forwarded']
   ) {
     return res.status(403).json({ error: 'Control API is local-only and blocked over tunnels/proxies.' });
@@ -73,25 +88,93 @@ function requireLocalControlOrigin(req, res, next) {
 }
 
 const app = express();
-app.use('/mcp', cors({
+app.disable('x-powered-by');
+const mcpCors = cors({
   origin: true,
-  exposedHeaders: ['Mcp-Session-Id'],
-}));
+  exposedHeaders: ['Mcp-Session-Id', 'Mcp-Protocol-Version'],
+});
+
+/**
+ * Optional Bearer token enforcement for public/IDE MCP endpoints (/mcp, /sse, /messages).
+ * Disabled when settings.mcpAuthToken is empty so zero-auth clients (e.g. Gemini Custom MCP)
+ * continue to work out of the box.
+ */
+function requireMcpAuth(req, res, next) {
+  if (req.method === 'OPTIONS') return next();
+  const expected = String(configStore.getSettings().mcpAuthToken || '').trim();
+  if (!expected) return next();
+
+  const authHeader = String(req.headers.authorization || '');
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  const presented = match ? match[1].trim() : '';
+  if (!tokensMatch(presented, expected)) {
+    res.setHeader('WWW-Authenticate', 'Bearer realm="mcp-switchboard"');
+    return res.status(401).json({
+      jsonrpc: '2.0',
+      error: { code: -32001, message: 'Unauthorized: valid Bearer token required.' },
+      id: req.body?.id ?? null,
+    });
+  }
+  next();
+}
+
+app.use(['/mcp', '/sse', '/messages'], mcpCors, requireMcpAuth);
 app.use('/health', cors({ origin: true }));
+app.use(['/icon.png', '/apple-touch-icon.png', '/favicon.ico'], cors({ origin: true }));
 app.use('/api', requireLocalControlOrigin, cors({
   origin: (origin, cb) => cb(null, !origin || isLocalOrigin(origin)),
   credentials: true,
 }));
 app.use(express.json({ limit: '4mb' }));
 
-// Track active Streamable HTTP MCP sessions so we can broadcast notifications/tools/list_changed
-const mcpSessions = new Map(); // sessionId -> { server, transport }
+// Track active Streamable HTTP & legacy SSE sessions with bounded capacity and idle TTL
+const MAX_MCP_SESSIONS = 64;
+const SESSION_IDLE_TTL_MS = 2 * 60 * 60 * 1000;
+const mcpSessions = new Map(); // sessionId -> { server, transport, kind: 'http' | 'sse', lastSeen: number }
 
-// Track SSE clients subscribed from the React Switchboard UI
+function closeSessionAsync(key, session) {
+  mcpSessions.delete(key);
+  try { session?.transport?.close?.().catch?.(() => {}); } catch {}
+  try { session?.server?.close?.().catch?.(() => {}); } catch {}
+}
+
+function registerSession(key, entry) {
+  if (mcpSessions.size >= MAX_MCP_SESSIONS) {
+    // Evict oldest HTTP session first so long-lived SSE streams stay intact when possible
+    let oldestKey = null;
+    let oldestTs = Infinity;
+    for (const [k, s] of mcpSessions.entries()) {
+      if (s.kind === 'http' && s.lastSeen < oldestTs) {
+        oldestTs = s.lastSeen;
+        oldestKey = k;
+      }
+    }
+    if (!oldestKey) oldestKey = mcpSessions.keys().next().value || null;
+    if (oldestKey) closeSessionAsync(oldestKey, mcpSessions.get(oldestKey));
+  }
+  mcpSessions.set(key, { ...entry, lastSeen: Date.now() });
+}
+
+const sessionPruneTimer = !IS_STDIO_BRIDGE
+  ? setInterval(() => {
+      const cutoff = Date.now() - SESSION_IDLE_TTL_MS;
+      for (const [key, session] of mcpSessions.entries()) {
+        const sseClosed = session.kind === 'sse' && (session.res?.writableEnded || session.res?.destroyed);
+        if ((session.kind === 'http' && session.lastSeen < cutoff) || sseClosed) {
+          closeSessionAsync(key, session);
+        }
+      }
+    }, 15 * 60 * 1000)
+  : null;
+sessionPruneTimer?.unref?.();
+
+// Track SSE clients subscribed from the UI with bounded capacity
+const MAX_UI_SSE_CLIENTS = 32;
 const uiSseClients = new Set();
 
 let boundPort = configStore.getSettings().port || PORT_MIN;
 let httpServer = null;
+let ipv6HttpServer = null;
 let isShuttingDown = false;
 
 function buildFullState() {
@@ -108,6 +191,10 @@ function buildFullState() {
 function broadcastUiEvent(event, data) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const res of uiSseClients) {
+    if (res.writableEnded || res.destroyed) {
+      uiSseClients.delete(res);
+      continue;
+    }
     try {
       res.write(payload);
     } catch {
@@ -121,30 +208,78 @@ function broadcastUiEvent(event, data) {
  */
 function createAggregatedMcpServer() {
   const server = new Server(
-    { name: 'mcp-switchboard', version: '1.0.2' },
-    { capabilities: { tools: { listChanged: true } } }
+    {
+      name: 'mcp-switchboard',
+      title: 'MCP Switchboard',
+      version: '1.0.2',
+      description: 'Dynamic MCP multiplexer and Cloudflare HTTPS tunnel switchboard.',
+      icons: getMcpServerIcons(tunnelManager.getState().publicUrl),
+    },
+    {
+      capabilities: {
+        tools: { listChanged: true },
+        prompts: { listChanged: true },
+        resources: { listChanged: true },
+      },
+    }
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return {
-      tools: mcpManager.getAggregatedTools(),
-    };
-  });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: mcpManager.getAggregatedTools(),
+  }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     return mcpManager.callTool(name, args);
   });
 
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: mcpManager.getAggregatedPrompts(),
+  }));
+
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    return mcpManager.getPrompt(name, args);
+  });
+
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+    resources: mcpManager.getAggregatedResources(),
+  }));
+
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({
+    resourceTemplates: mcpManager.getAggregatedResourceTemplates(),
+  }));
+
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    return mcpManager.readResource(request.params.uri);
+  });
+
   return server;
 }
 
-// Broadcast notifications/tools/list_changed to every connected MCP client session
+// Broadcast capability list_changed notifications to every connected MCP client session
 mcpManager.on('toolsChanged', () => {
   for (const [sessionId, session] of mcpSessions.entries()) {
     session.server.sendToolListChanged().catch(() => {
-      // Session may have disconnected; ignore
-      mcpSessions.delete(sessionId);
+      closeSessionAsync(sessionId, session);
+    });
+  }
+  broadcastUiEvent('state', buildFullState());
+});
+
+mcpManager.on('promptsChanged', () => {
+  for (const [sessionId, session] of mcpSessions.entries()) {
+    session.server.sendPromptListChanged().catch(() => {
+      closeSessionAsync(sessionId, session);
+    });
+  }
+  broadcastUiEvent('state', buildFullState());
+});
+
+mcpManager.on('resourcesChanged', () => {
+  for (const [sessionId, session] of mcpSessions.entries()) {
+    session.server.sendResourceListChanged().catch(() => {
+      closeSessionAsync(sessionId, session);
     });
   }
   broadcastUiEvent('state', buildFullState());
@@ -163,8 +298,54 @@ tunnelManager.on('state', () => {
 });
 
 // ============================================================================
-// 1. Streamable HTTP MCP Endpoint (/mcp) & Health Check (/health)
+// 1. Streamable HTTP MCP Endpoint (/mcp), Health Check & Public Icons
 // ============================================================================
+
+const PUBLIC_LANDING_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP Switchboard</title>
+    <meta name="description" content="Dynamic MCP multiplexer and Streamable HTTP endpoint." />
+    <link rel="icon" type="image/png" sizes="128x128" href="/icon.png" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  </head>
+  <body>
+    <main>
+      <h1>MCP Switchboard</h1>
+      <p>Streamable HTTP MCP endpoint available at <code>/mcp</code>.</p>
+    </main>
+  </body>
+</html>
+`;
+
+app.get('/', (_req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.send(PUBLIC_LANDING_HTML);
+});
+
+app.get(['/icon.png', '/apple-touch-icon.png'], (_req, res) => {
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send(APP_ICON_128_BUFFER);
+});
+
+app.get('/favicon.ico', (_req, res) => {
+  res.setHeader('Content-Type', 'image/x-icon');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.send(APP_FAVICON_ICO_BUFFER);
+});
+
+app.head(['/mcp', '/sse'], (_req, res) => {
+  res.status(200).end();
+});
+
+app.get('/.well-known/*', (_req, res) => {
+  res.status(404).json({ error: 'Not configured' });
+});
 
 app.get('/health', (_req, res) => {
   const summary = mcpManager.getSummary();
@@ -173,6 +354,7 @@ app.get('/health', (_req, res) => {
     service: 'mcp-switchboard',
     port: boundPort,
     endpoint: `http://localhost:${boundPort}/mcp`,
+    authRequired: Boolean(String(configStore.getSettings().mcpAuthToken || '').trim()),
     tunnel: tunnelManager.getState(),
     activeServers: summary.totals.activeServers,
     totalTools: summary.totals.totalTools,
@@ -183,12 +365,22 @@ app.get('/health', (_req, res) => {
 
 app.post('/mcp', async (req, res) => {
   try {
-    const sessionId = req.headers['mcp-session-id'];
+    // Normalize Accept header for clients sending only `application/json` or `*/*`
+    const rawAccept = String(req.headers.accept || '');
+    const clientAcceptsSse = rawAccept.includes('text/event-stream');
+    if (!rawAccept.includes('application/json') || !clientAcceptsSse) {
+      req.headers.accept = 'application/json, text/event-stream';
+    }
 
-    // Reuse existing session if valid
-    if (sessionId && mcpSessions.has(sessionId)) {
-      const session = mcpSessions.get(sessionId);
-      await session.transport.handleRequest(req, res, req.body);
+    const sessionId = typeof req.headers['mcp-session-id'] === 'string'
+      ? req.headers['mcp-session-id']
+      : '';
+    const existing = sessionId ? mcpSessions.get(sessionId) : null;
+
+    // Reuse existing Streamable HTTP session if valid
+    if (existing && existing.kind === 'http') {
+      existing.lastSeen = Date.now();
+      await existing.transport.handleRequest(req, res, req.body);
       return;
     }
 
@@ -202,8 +394,9 @@ app.post('/mcp', async (req, res) => {
       const server = createAggregatedMcpServer();
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
+        enableJsonResponse: !clientAcceptsSse,
         onsessioninitialized: (sid) => {
-          mcpSessions.set(sid, { server, transport });
+          registerSession(sid, { server, transport, kind: 'http' });
         },
       });
 
@@ -211,6 +404,7 @@ app.post('/mcp', async (req, res) => {
         if (transport.sessionId) {
           mcpSessions.delete(transport.sessionId);
         }
+        server.close().catch(() => {});
       };
 
       await server.connect(transport);
@@ -219,7 +413,7 @@ app.post('/mcp', async (req, res) => {
     }
 
     // Per MCP Streamable HTTP spec, return 404 if client sent an unknown/expired session ID
-    if (sessionId && !mcpSessions.has(sessionId)) {
+    if (sessionId && (!existing || existing.kind !== 'http')) {
       res.status(404).json({
         jsonrpc: '2.0',
         error: { code: -32001, message: 'Session expired or not found. Please re-initialize.' },
@@ -232,11 +426,16 @@ app.post('/mcp', async (req, res) => {
     const statelessServer = createAggregatedMcpServer();
     const statelessTransport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
+      enableJsonResponse: !clientAcceptsSse,
     });
-    res.on('close', () => {
+    let statelessCleaned = false;
+    const cleanupStateless = () => {
+      if (statelessCleaned) return;
+      statelessCleaned = true;
       statelessTransport.close().catch(() => {});
       statelessServer.close().catch(() => {});
-    });
+    };
+    res.on('close', cleanupStateless);
     await statelessServer.connect(statelessTransport);
     await statelessTransport.handleRequest(req, res, req.body);
   } catch (err) {
@@ -251,9 +450,48 @@ app.post('/mcp', async (req, res) => {
   }
 });
 
+// Legacy HTTP+SSE transport endpoints (/sse & /messages) for older IDE/agent clients
+app.get('/sse', async (req, res) => {
+  try {
+    const server = createAggregatedMcpServer();
+    const transport = new SSEServerTransport('/messages', res);
+    const key = `sse:${transport.sessionId}`;
+    const entry = { server, transport, res, kind: 'sse' };
+    registerSession(key, entry);
+    transport.onclose = () => {
+      mcpSessions.delete(key);
+      server.close().catch(() => {});
+    };
+    req.on('close', () => {
+      if (mcpSessions.has(key)) closeSessionAsync(key, entry);
+    });
+    await server.connect(transport);
+  } catch (err) {
+    console.error('[MCP /sse GET error]', err);
+    if (!res.headersSent) res.status(500).end();
+  }
+});
+
+app.post('/messages', async (req, res) => {
+  const sessionId = typeof req.query?.sessionId === 'string' ? req.query.sessionId : '';
+  const session = sessionId ? mcpSessions.get(`sse:${sessionId}`) : null;
+  if (!session || session.kind !== 'sse') {
+    res.status(404).json({ error: 'SSE session not found. Connect to GET /sse first.' });
+    return;
+  }
+  session.lastSeen = Date.now();
+  try {
+    await session.transport.handlePostMessage(req, res, req.body);
+  } catch (err) {
+    console.error('[MCP /messages POST error]', err);
+    if (!res.headersSent) res.status(500).end();
+  }
+});
+
 app.get('/mcp', async (req, res) => {
-  const sessionId = req.headers['mcp-session-id'];
-  if (!sessionId || !mcpSessions.has(sessionId)) {
+  const sessionId = typeof req.headers['mcp-session-id'] === 'string' ? req.headers['mcp-session-id'] : '';
+  const session = sessionId ? mcpSessions.get(sessionId) : null;
+  if (!session || session.kind !== 'http') {
     res.status(400).json({
       jsonrpc: '2.0',
       error: { code: -32000, message: 'Invalid or missing Mcp-Session-Id header.' },
@@ -261,8 +499,8 @@ app.get('/mcp', async (req, res) => {
     });
     return;
   }
+  session.lastSeen = Date.now();
   try {
-    const session = mcpSessions.get(sessionId);
     await session.transport.handleRequest(req, res);
   } catch (err) {
     console.error('[MCP /mcp GET error]', err);
@@ -271,19 +509,19 @@ app.get('/mcp', async (req, res) => {
 });
 
 app.delete('/mcp', async (req, res) => {
-  const sessionId = req.headers['mcp-session-id'];
-  if (!sessionId || !mcpSessions.has(sessionId)) {
+  const sessionId = typeof req.headers['mcp-session-id'] === 'string' ? req.headers['mcp-session-id'] : '';
+  const session = sessionId ? mcpSessions.get(sessionId) : null;
+  if (!session || session.kind !== 'http') {
     res.status(404).json({ error: 'Session not found' });
     return;
   }
   try {
-    const session = mcpSessions.get(sessionId);
     await session.transport.handleRequest(req, res);
   } catch (err) {
     console.error('[MCP /mcp DELETE error]', err);
     if (!res.headersSent) res.status(500).end();
   } finally {
-    mcpSessions.delete(sessionId);
+    closeSessionAsync(sessionId, session);
   }
 });
 
@@ -301,22 +539,41 @@ app.get('/api/events', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
 
+  if (uiSseClients.size >= MAX_UI_SSE_CLIENTS) {
+    const oldest = uiSseClients.values().next().value;
+    if (oldest) {
+      uiSseClients.delete(oldest);
+      try { oldest.end(); } catch {}
+    }
+  }
+
   uiSseClients.add(res);
   res.write(`event: state\ndata: ${JSON.stringify(buildFullState())}\n\n`);
 
   const keepAlive = setInterval(() => {
+    if (res.writableEnded || res.destroyed) {
+      cleanup();
+      return;
+    }
     try {
       res.write(': keepalive\n\n');
     } catch {
-      clearInterval(keepAlive);
-      uiSseClients.delete(res);
+      cleanup();
     }
   }, 15000);
+  keepAlive.unref?.();
 
-  req.on('close', () => {
+  let cleaned = false;
+  function cleanup() {
+    if (cleaned) return;
+    cleaned = true;
     clearInterval(keepAlive);
     uiSseClients.delete(res);
-  });
+  }
+
+  req.on('close', cleanup);
+  res.on('close', cleanup);
+  res.on('error', cleanup);
 });
 
 app.post('/api/servers/import', (req, res) => {
@@ -393,9 +650,13 @@ app.post('/api/tunnel/stop', async (_req, res) => {
 });
 
 app.patch('/api/settings', (req, res) => {
-  const settings = configStore.updateSettings(req.body || {});
-  broadcastUiEvent('state', buildFullState());
-  res.json({ ok: true, settings, state: buildFullState() });
+  try {
+    const settings = configStore.updateSettings(req.body || {});
+    broadcastUiEvent('state', buildFullState());
+    res.json({ ok: true, settings, state: buildFullState() });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.get('/api/diagnostics', async (_req, res) => {
@@ -408,9 +669,44 @@ app.post('/api/shutdown', async (_req, res) => {
   await gracefulShutdown('api');
 });
 
+app.use((err, _req, res, _next) => {
+  const status = err?.status || err?.statusCode || 400;
+  if (!res.headersSent) {
+    res.status(status).json({ error: err?.message || 'Malformed request' });
+  }
+});
+
 // ============================================================================
 // 3. Automatic Port Fallback (8000-8010) & Strict Process-Tree Shutdown
 // ============================================================================
+
+function closeHttpServerFast(srv) {
+  if (!srv) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, 400);
+    timer.unref?.();
+    srv.close(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+    srv.closeAllConnections?.();
+  });
+}
+
+function bindIpv6Loopback(port) {
+  try {
+    const v6 = http.createServer(app);
+    v6.once('error', () => {
+      // Optional IPv6 loopback; ignore if OS disables IPv6 or port is busy on ::1
+    });
+    v6.once('listening', () => {
+      ipv6HttpServer = v6;
+    });
+    v6.listen(port, '::1');
+  } catch {
+    // Ignore IPv6 bind failures
+  }
+}
 
 function listenWithFallback(startPort = PORT_MIN, maxPort = PORT_MAX) {
   return new Promise((resolve, reject) => {
@@ -428,6 +724,7 @@ function listenWithFallback(startPort = PORT_MIN, maxPort = PORT_MAX) {
         }
       });
       server.once('listening', () => {
+        bindIpv6Loopback(port);
         resolve({ server, port });
       });
       server.listen(port, '127.0.0.1');
@@ -440,6 +737,8 @@ function listenWithFallback(startPort = PORT_MIN, maxPort = PORT_MAX) {
 async function gracefulShutdown(signal) {
   if (isShuttingDown) return;
   isShuttingDown = true;
+  if (sessionPruneTimer) clearInterval(sessionPruneTimer);
+  if (parentWatchdogTimer) clearInterval(parentWatchdogTimer);
   console.error(`[Switchboard] Shutting down (${signal})...`);
 
   for (const res of uiSseClients) {
@@ -458,9 +757,10 @@ async function gracefulShutdown(signal) {
     mcpManager.shutdownAll(),
   ]);
 
-  if (httpServer) {
-    await new Promise((resolve) => httpServer.close(() => resolve()));
-  }
+  await Promise.all([
+    closeHttpServerFast(ipv6HttpServer),
+    closeHttpServerFast(httpServer),
+  ]);
   process.exit(0);
 }
 
@@ -477,10 +777,11 @@ process.on('uncaughtException', (err) => {
 
 // Parent Process Watchdog for Tauri Desktop: cleanly terminate when parent GUI exits/crashes
 const parentPidStr = process.env.MCP_SWITCHBOARD_PARENT_PID;
-if (parentPidStr) {
+let parentWatchdogTimer = null;
+if (!IS_STDIO_BRIDGE && parentPidStr) {
   const parentPid = parseInt(parentPidStr, 10);
   if (!isNaN(parentPid) && parentPid > 0) {
-    setInterval(() => {
+    parentWatchdogTimer = setInterval(() => {
       try {
         // process.kill(pid, 0) tests process existence without delivering a signal
         process.kill(parentPid, 0);
@@ -489,10 +790,16 @@ if (parentPidStr) {
         gracefulShutdown('parent_exit');
       }
     }, 1200);
+    parentWatchdogTimer.unref?.();
   }
 }
 
 async function main() {
+  if (IS_STDIO_BRIDGE) {
+    await runStdioBridge();
+    return;
+  }
+
   const preferredPort = Number(process.env.PORT || configStore.getSettings().port || PORT_MIN);
   const { server, port } = await listenWithFallback(preferredPort, PORT_MAX);
   httpServer = server;
