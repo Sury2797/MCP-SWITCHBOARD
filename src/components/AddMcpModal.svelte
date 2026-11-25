@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { fade, fly } from 'svelte/transition';
-  import { cubicOut } from 'svelte/easing';
+  import { tick } from 'svelte';
+  import { fade } from 'svelte/transition';
   import StreamlineIcon from '../lib/icons/StreamlineIcon.svelte';
+  import ServerIcon from '../lib/icons/ServerIcon.svelte';
   import Button from '../lib/primitives/Button.svelte';
   import CustomSelect, { type SelectOption } from '../lib/primitives/CustomSelect.svelte';
+  import SegmentedControl, { type SegmentOption } from '../lib/primitives/SegmentedControl.svelte';
+  import { BACKDROP_FADE, glassModal } from '../lib/motion';
   import type { McpServerSnapshot, ServerSavePayload, TransportType } from '../lib/types';
 
   interface Props {
@@ -27,6 +30,9 @@
     onSaveServer = async () => {},
   }: Props = $props();
 
+  let jsonInputEl = $state<HTMLTextAreaElement | null>(null);
+  let nameInputEl = $state<HTMLInputElement | null>(null);
+
   const TRANSPORT_OPTIONS: SelectOption[] = [
     {
       value: 'stdio',
@@ -46,6 +52,11 @@
       badge: 'Legacy Remote',
       description: 'Legacy Server-Sent Events remote MCP endpoint',
     },
+  ];
+
+  const MODE_OPTIONS: SegmentOption[] = [
+    { value: 'json', label: 'Paste JSON' },
+    { value: 'form', label: 'Simple Form' },
   ];
 
   const SAMPLE_PLACEHOLDER = `{
@@ -100,6 +111,13 @@
       envPairs = [];
       headerPairs = [];
     }
+    void tick().then(() => {
+      if (editingServer) {
+        nameInputEl?.focus();
+      } else {
+        jsonInputEl?.focus();
+      }
+    });
   });
 
   const jsonValidation = $derived.by(() => {
@@ -110,10 +128,14 @@
         return { valid: false, error: 'Root value must be a JSON object.', servers: [] };
       }
       const root = parsed as Record<string, unknown>;
-      const rawMap =
-        root.mcpServers && typeof root.mcpServers === 'object' && !Array.isArray(root.mcpServers)
-          ? (root.mcpServers as Record<string, unknown>)
-          : root;
+      let rawMap = root;
+      for (const key of ['mcpServers', 'servers', 'context_servers', 'mcp']) {
+        const candidate = root[key];
+        if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+          rawMap = candidate as Record<string, unknown>;
+          break;
+        }
+      }
       const entries = Object.entries(rawMap);
       if (entries.length === 0) {
         return { valid: false, error: 'No server entries found in JSON.', servers: [] };
@@ -123,9 +145,28 @@
         if (!rawCfg || typeof rawCfg !== 'object' || Array.isArray(rawCfg)) {
           return { valid: false, error: `Entry "${entryName}" must be a JSON object.`, servers: [] };
         }
-        const cfg = rawCfg as { url?: unknown; command?: unknown; args?: unknown[] };
-        const hasUrl = typeof cfg.url === 'string' && cfg.url.trim().length > 0;
-        const hasCmd = typeof cfg.command === 'string' && cfg.command.trim().length > 0;
+        const cfg = rawCfg as {
+          url?: unknown;
+          httpUrl?: unknown;
+          serverUrl?: unknown;
+          command?: unknown;
+          args?: unknown[];
+        };
+        const rawUrl = cfg.url ?? cfg.httpUrl ?? cfg.serverUrl;
+        const hasUrl = typeof rawUrl === 'string' && rawUrl.trim().length > 0;
+        let cmdDisplay = '';
+        if (typeof cfg.command === 'string' && cfg.command.trim().length > 0) {
+          cmdDisplay = `${cfg.command.trim()} ${(Array.isArray(cfg.args) ? cfg.args : []).join(' ')}`.trim();
+        } else if (Array.isArray(cfg.command) && cfg.command.length > 0) {
+          cmdDisplay = cfg.command.map((v) => String(v)).join(' ').trim();
+        } else if (cfg.command && typeof cfg.command === 'object') {
+          const zedCmd = cfg.command as { path?: unknown; command?: unknown; args?: unknown[] };
+          const bin = String(zedCmd.path || zedCmd.command || '').trim();
+          if (bin) {
+            cmdDisplay = `${bin} ${(Array.isArray(zedCmd.args) ? zedCmd.args : []).join(' ')}`.trim();
+          }
+        }
+        const hasCmd = cmdDisplay.length > 0;
         if (!hasUrl && !hasCmd) {
           return {
             valid: false,
@@ -136,9 +177,7 @@
         summaries.push({
           name: entryName.trim(),
           transport: hasUrl ? 'HTTP' : 'STDIO',
-          target: hasUrl
-            ? String(cfg.url).trim()
-            : `${String(cfg.command)} ${(Array.isArray(cfg.args) ? cfg.args : []).join(' ')}`.trim(),
+          target: hasUrl ? String(rawUrl).trim() : cmdDisplay,
         });
       }
       return { valid: true, error: null, servers: summaries };
@@ -148,7 +187,10 @@
   });
 
   function handleWindowKey(e: KeyboardEvent): void {
-    if (open && e.key === 'Escape') onClose();
+    if (open && e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+    }
   }
 
   async function handleImportSubmit(e: SubmitEvent): Promise<void> {
@@ -206,8 +248,8 @@
 
 {#if open}
   <div
-    transition:fade={{ duration: 140 }}
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4 backdrop-blur-[2px]"
+    transition:fade={BACKDROP_FADE}
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
   >
     <button
       type="button"
@@ -217,75 +259,83 @@
       tabindex="-1"
     ></button>
     <div
-      transition:fly={{ y: 10, duration: 200, easing: cubicOut }}
+      transition:glassModal
       role="dialog"
       aria-modal="true"
       aria-labelledby="add-mcp-title"
       tabindex="-1"
-      class="relative z-10 w-full max-w-xl max-h-[calc(100dvh-2rem)] rounded-xl border border-graphite-200 dark:border-graphite-800 bg-white dark:bg-graphite-900 shadow-2xl flex flex-col overflow-hidden"
+      class="board-glass-modal relative z-10 w-[92vw] max-w-2xl max-h-[min(88vh,780px)] rounded-2xl border border-graphite-200/80 dark:border-white/[0.09] flex flex-col overflow-hidden focus:outline-none"
     >
-      <div class="flex items-center justify-between border-b border-graphite-200 dark:border-graphite-800 px-4 sm:px-5 py-3 sm:py-3.5 shrink-0">
-        <h2 id="add-mcp-title" class="text-sm font-semibold text-graphite-950 dark:text-graphite-50">
-          {editingServer ? `Edit ${editingServer.name}` : 'Add MCP Server'}
-        </h2>
+      <div class="flex items-center justify-between gap-3 border-b border-graphite-200/80 dark:border-white/[0.08] px-5 py-3.5 shrink-0">
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="flex h-8 w-8 items-center justify-center rounded-xl border border-graphite-200 dark:border-white/[0.1] bg-graphite-50/90 dark:bg-white/[0.05] text-graphite-700 dark:text-graphite-200 shrink-0 shadow-xs">
+            {#if isEditing || (tab === 'form' && name.trim())}
+              <ServerIcon name={editingServer?.name || name} command={command} url={url} size={18} />
+            {:else}
+              <StreamlineIcon name="Plus" size={14} />
+            {/if}
+          </div>
+          <h2 id="add-mcp-title" class="text-sm font-semibold text-graphite-950 dark:text-graphite-50 truncate">
+            {editingServer ? `Edit ${editingServer.name}` : 'Add MCP Server'}
+          </h2>
+        </div>
         <Button variant="ghost" size="xs" iconOnly onclick={onClose} aria-label="Close modal">
           <StreamlineIcon name="X" size={13} />
         </Button>
       </div>
 
       {#if !isEditing}
-        <div class="flex border-b border-graphite-200 dark:border-graphite-800 px-4 sm:px-5 pt-2 gap-4 sm:gap-5 text-xs font-medium shrink-0">
-          <button
-            type="button"
-            onclick={() => { tab = 'json'; submitError = null; }}
-            class="pb-2.5 border-b-2 transition-colors {tab === 'json'
-              ? 'border-graphite-950 dark:border-graphite-100 text-graphite-950 dark:text-graphite-50'
-              : 'border-transparent text-graphite-500 hover:text-graphite-800 dark:hover:text-graphite-200'}"
-          >
-            Paste JSON
-          </button>
-          <button
-            type="button"
-            onclick={() => { tab = 'form'; submitError = null; }}
-            class="pb-2.5 border-b-2 transition-colors {tab === 'form'
-              ? 'border-graphite-950 dark:border-graphite-100 text-graphite-950 dark:text-graphite-50'
-              : 'border-transparent text-graphite-500 hover:text-graphite-800 dark:hover:text-graphite-200'}"
-          >
-            Simple Form
-          </button>
+        <div class="border-b border-graphite-200/80 dark:border-white/[0.08] px-5 py-2.5 shrink-0">
+          <SegmentedControl
+            options={MODE_OPTIONS}
+            value={tab}
+            ariaLabel="Add server mode"
+            onchange={(v) => {
+              tab = v as 'json' | 'form';
+              submitError = null;
+            }}
+          />
         </div>
       {/if}
 
       {#if tab === 'json'}
-        <form onsubmit={handleImportSubmit} class="p-4 sm:p-5 space-y-3.5 sm:space-y-4 overflow-y-auto">
-          <p class="text-xs text-graphite-500 dark:text-graphite-400">
-            Paste any standard <code class="font-mono">mcpServers</code> JSON from GitHub, Claude Desktop, Cursor, or MCP Market. Multiple servers in one paste import together.
-          </p>
+        <div role="tabpanel" class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <form onsubmit={handleImportSubmit} class="p-5 space-y-4">
+          <div class="space-y-1.5">
+            <p class="text-xs text-graphite-600 dark:text-graphite-300 leading-relaxed">
+              Paste any standard <code class="font-mono">mcpServers</code>, <code class="font-mono">servers</code>, or <code class="font-mono">context_servers</code> JSON from GitHub, Antigravity, Claude Desktop, Cursor, VS Code, Windsurf, or Zed.
+            </p>
+            <p class="font-mono text-[10.5px] text-graphite-500 dark:text-graphite-400 break-words">
+              Paths: %APPDATA%\Claude · ~/Library/Application Support/Claude · ~/.config/zed · ~/.cursor/mcp.json
+            </p>
+          </div>
 
           <textarea
-            rows={9}
+            bind:this={jsonInputEl}
+            rows={10}
             bind:value={jsonText}
             placeholder={SAMPLE_PLACEHOLDER}
+            aria-label="MCP JSON configuration"
             spellcheck="false"
-            class="relative z-10 w-full rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 p-3 font-mono text-xs leading-relaxed text-graphite-900 dark:text-graphite-100 shadow-xs focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none transition-colors"
+            class="relative z-10 w-full rounded-xl border border-graphite-200 dark:border-graphite-700/80 bg-graphite-50/50 dark:bg-graphite-950 p-3.5 font-mono text-xs leading-relaxed text-graphite-900 dark:text-graphite-100 shadow-xs focus:border-graphite-900 dark:focus:border-white/50 focus:ring-2 focus:ring-graphite-900/15 dark:focus:ring-white/15 focus:outline-none transition-colors"
           ></textarea>
 
           {#if jsonText.trim() && jsonValidation.error}
-            <div class="flex items-start gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
+            <div class="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
               <StreamlineIcon name="AlertCircle" size={14} class="mt-0.5 text-rose-500 shrink-0" />
-              <span class="font-mono">{jsonValidation.error}</span>
+              <span class="font-mono break-words">{jsonValidation.error}</span>
             </div>
           {/if}
 
           {#if jsonValidation.valid}
-            <div class="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-300 space-y-1">
+            <div class="rounded-xl border border-graphite-200/80 dark:border-white/[0.1] bg-graphite-50/80 dark:bg-white/[0.04] backdrop-blur-sm px-3.5 py-2.5 text-xs text-graphite-800 dark:text-graphite-200 space-y-1.5">
               <div class="flex items-center gap-1.5 font-medium">
-                <StreamlineIcon name="CheckCircle2" size={14} class="text-emerald-500 shrink-0" />
+                <StreamlineIcon name="CheckCircle2" size={14} class="text-graphite-700 dark:text-graphite-300 shrink-0" />
                 <span>Detected {jsonValidation.servers.length} {jsonValidation.servers.length === 1 ? 'server' : 'servers'} ready to import:</span>
               </div>
-              <ul class="pl-5 list-disc font-mono text-[11px] space-y-0.5">
+              <ul class="pl-5 list-disc font-mono text-[11px] space-y-1 text-graphite-700 dark:text-graphite-300">
                 {#each jsonValidation.servers as s (s.name)}
-                  <li>
+                  <li class="break-words">
                     <span class="font-semibold">{s.name}</span> ({s.transport}) — <span class="opacity-80">{s.target}</span>
                   </li>
                 {/each}
@@ -294,7 +344,7 @@
           {/if}
 
           {#if submitError}
-            <p class="text-xs text-rose-500">{submitError}</p>
+            <p class="text-xs text-rose-500 break-words">{submitError}</p>
           {/if}
 
           <div class="flex justify-end gap-2 pt-1">
@@ -307,19 +357,22 @@
                   : 'Import Server'}
             </Button>
           </div>
-        </form>
+          </form>
+        </div>
       {:else}
-        <form onsubmit={handleFormSubmit} class="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+        <div role="tabpanel" class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+          <form onsubmit={handleFormSubmit} class="p-5 pb-8 space-y-4">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
               <label for="mcp-name" class="block text-xs font-medium text-graphite-700 dark:text-graphite-300 mb-1.5">Server Name</label>
               <input
+                bind:this={nameInputEl}
                 id="mcp-name"
                 type="text"
                 required
                 bind:value={name}
                 placeholder="e.g. github"
-                class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 px-3 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none transition-colors"
+                class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 px-3 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-graphite-900 dark:focus:border-white/50 focus:ring-2 focus:ring-graphite-900/15 dark:focus:ring-white/15 focus:outline-none transition-colors"
               />
             </div>
 
@@ -344,7 +397,7 @@
                   required
                   bind:value={command}
                   placeholder="npx, uvx, node"
-                  class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 px-3 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none transition-colors"
+                  class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 px-3 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-graphite-900 dark:focus:border-white/50 focus:ring-2 focus:ring-graphite-900/15 dark:focus:ring-white/15 focus:outline-none transition-colors"
                 />
               </div>
               <div class="sm:col-span-2">
@@ -354,7 +407,7 @@
                   type="text"
                   bind:value={argsText}
                   placeholder="-y @modelcontextprotocol/server-filesystem /path"
-                  class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 px-3 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none transition-colors"
+                  class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 px-3 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-graphite-900 dark:focus:border-white/50 focus:ring-2 focus:ring-graphite-900/15 dark:focus:ring-white/15 focus:outline-none transition-colors"
                 />
               </div>
             </div>
@@ -373,14 +426,14 @@
                     type="text"
                     bind:value={pair.key}
                     placeholder="KEY"
-                    class="w-2/5 h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 px-3 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none transition-colors"
+                    class="w-2/5 h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 px-3 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-graphite-900 dark:focus:border-white/50 focus:ring-2 focus:ring-graphite-900/15 dark:focus:ring-white/15 focus:outline-none transition-colors"
                   />
-                  <div class="relative flex-1">
+                  <div class="relative flex-1 min-w-0">
                     <input
                       type={revealedSecrets[`env-${idx}`] ? 'text' : 'password'}
                       bind:value={pair.value}
                       placeholder="Secret value"
-                      class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 pl-3 pr-9 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none transition-colors"
+                      class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 pl-3 pr-9 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-graphite-900 dark:focus:border-white/50 focus:ring-2 focus:ring-graphite-900/15 dark:focus:ring-white/15 focus:outline-none transition-colors"
                     />
                     <button
                       type="button"
@@ -412,7 +465,7 @@
                 required
                 bind:value={url}
                 placeholder="https://example.com/mcp"
-                class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 px-3 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none transition-colors"
+                class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 px-3 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-graphite-900 dark:focus:border-white/50 focus:ring-2 focus:ring-graphite-900/15 dark:focus:ring-white/15 focus:outline-none transition-colors"
               />
             </div>
 
@@ -430,14 +483,14 @@
                     type="text"
                     bind:value={pair.key}
                     placeholder="Authorization"
-                    class="w-2/5 h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 px-3 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none transition-colors"
+                    class="w-2/5 h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 px-3 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-graphite-900 dark:focus:border-white/50 focus:ring-2 focus:ring-graphite-900/15 dark:focus:ring-white/15 focus:outline-none transition-colors"
                   />
-                  <div class="relative flex-1">
+                  <div class="relative flex-1 min-w-0">
                     <input
                       type={revealedSecrets[`hdr-${idx}`] ? 'text' : 'password'}
                       bind:value={pair.value}
                       placeholder="Bearer ..."
-                      class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 pl-3 pr-9 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none transition-colors"
+                      class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 pl-3 pr-9 text-xs font-mono text-graphite-900 dark:text-graphite-100 shadow-xs placeholder:text-graphite-400 dark:placeholder:text-graphite-600 focus:border-graphite-900 dark:focus:border-white/50 focus:ring-2 focus:ring-graphite-900/15 dark:focus:ring-white/15 focus:outline-none transition-colors"
                     />
                     <button
                       type="button"
@@ -463,9 +516,9 @@
           {/if}
 
           {#if submitError}
-            <div class="flex items-center gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-300">
+            <div class="flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-300">
               <StreamlineIcon name="AlertCircle" size={14} class="shrink-0" />
-              <span>{submitError}</span>
+              <span class="break-words">{submitError}</span>
             </div>
           {/if}
 
@@ -475,7 +528,8 @@
               {submitting ? 'Saving…' : isEditing ? 'Save Changes' : 'Add Server'}
             </Button>
           </div>
-        </form>
+          </form>
+        </div>
       {/if}
     </div>
   </div>
