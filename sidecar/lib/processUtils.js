@@ -259,13 +259,13 @@ function getWinPathExts() {
 /**
  * Resolve an explicit path or bare command name against PATH/PATHEXT without spawning a shell.
  */
-export function findExecutableInPath(rawCommand) {
+export function findExecutableInPath(rawCommand, cwd = null) {
   const cleaned = stripOuterQuotes(rawCommand);
   if (!cleaned) return null;
 
   const isExplicitPath = cleaned.includes('\\') || cleaned.includes('/') || cleaned.startsWith('.');
   if (isExplicitPath) {
-    const abs = path.resolve(cleaned);
+    const abs = cwd ? path.resolve(cwd, cleaned) : path.resolve(cleaned);
     if (isExecutableFile(abs)) return abs;
     if (IS_WIN && !/\.[a-z0-9]+$/i.test(abs)) {
       for (const ext of getWinPathExts()) {
