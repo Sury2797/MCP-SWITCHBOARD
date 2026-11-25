@@ -5,7 +5,7 @@ const PREREQUISITES = [
   { id: 'npx', label: 'npx', args: ['--version'], role: 'Launches npm-hosted STDIO MCP servers' },
   { id: 'uvx', label: 'uvx (uv)', args: ['--version'], role: 'Launches Python-hosted STDIO MCP servers' },
   { id: 'python', label: 'Python', args: ['--version'], role: 'Runs local Python MCP scripts' },
-  { id: 'cloudflared', label: 'cloudflared', args: ['--version'], role: 'Creates automatic HTTPS tunnels for Gemini Desktop' },
+  { id: 'cloudflared', label: 'cloudflared', args: ['--version'], role: 'Creates automatic HTTPS tunnels for remote web & desktop clients (Gemini, ChatGPT, Claude)' },
 ];
 
 export async function runDiagnostics() {
