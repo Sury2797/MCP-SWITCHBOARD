@@ -448,34 +448,23 @@ export class McpManager extends EventEmitter {
       }
 
       const isPath = resolvedCommand.includes('/') || resolvedCommand.includes('\\') || resolvedCommand.startsWith('.');
-      if (isPath) {
-        if (!fs.existsSync(resolvedCommand)) {
-          const msg = `Executable "${resolvedCommand}" was not found.`;
-          rt.status = 'error';
-          rt.error = msg;
-          this.configStore.setServerEnabled(name, false);
-          this._appendLog(name, 'stderr', msg);
-          this._captureErrorTail(rt);
-          this._emitState();
-          return this.getServerSnapshot(name);
-        }
-      } else {
-        const probe = await checkBinary(resolvedCommand, ['--version']);
-        if (!probe.installed) {
-          const msg = `Binary "${resolvedCommand}" was not found on your system PATH.`;
-          rt.status = 'error';
-          rt.error = msg;
-          rt.installHint = getInstallHint(resolvedCommand);
-          this.configStore.setServerEnabled(name, false);
-          this._appendLog(name, 'stderr', msg);
-          this._captureErrorTail(rt);
-          this._emitState();
-          return this.getServerSnapshot(name);
-        }
-        if (probe.binary) {
-          resolvedCommand = stripOuterQuotes(probe.binary);
-        }
+      const resolvedExecutable = isPath
+        ? findExecutableInPath(resolvedCommand, config.cwd || null)
+        : await resolveBinaryPath(resolvedCommand);
+      if (!resolvedExecutable) {
+        const msg = isPath
+          ? `Executable "${resolvedCommand}" was not found.`
+          : `Binary "${resolvedCommand}" was not found on your system PATH.`;
+        rt.status = 'error';
+        rt.error = msg;
+        if (!isPath) rt.installHint = getInstallHint(resolvedCommand);
+        this.configStore.setServerEnabled(name, false);
+        this._appendLog(name, 'stderr', msg);
+        this._captureErrorTail(rt);
+        this._emitState();
+        return this.getServerSnapshot(name);
       }
+      resolvedCommand = resolvedExecutable;
     }
 
     /** @type {any} */
@@ -542,6 +531,7 @@ export class McpManager extends EventEmitter {
             await client.connect(transport);
           } catch (httpErr) {
             try { await transport?.close?.(); } catch {}
+            if (rt.stopping) throw httpErr;
             this._appendLog(name, 'system', `Streamable HTTP failed (${httpErr.message}); falling back to SSE...`);
             transport = new SSEClientTransport(targetUrl, { requestInit });
             rt.client = client;
