@@ -93,13 +93,13 @@
     aria-controls={listboxId}
     {disabled}
     onclick={toggleOpen}
-    class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 px-3 text-left text-xs text-graphite-900 dark:text-graphite-100 flex items-center justify-between gap-2 shadow-xs transition-[border-color,box-shadow] duration-150 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 disabled:opacity-50 disabled:cursor-not-allowed hover:border-graphite-300 dark:hover:border-graphite-600 {open ? 'border-sky-500 ring-1 ring-sky-500/30' : ''}"
+    class="board-btn-secondary w-full h-9 rounded-lg border border-graphite-950/[0.1] dark:border-white/[0.11] bg-white/80 dark:bg-white/[0.06] px-3 text-left text-xs text-graphite-900 dark:text-graphite-100 flex items-center justify-between gap-2 transition-[border-color,background-color,box-shadow,transform] duration-150 ease-[var(--ease-spring)] active:scale-[0.99] focus-visible:outline-none focus-visible:border-graphite-900 dark:focus-visible:border-white/50 focus-visible:ring-2 focus-visible:ring-graphite-950/25 dark:focus-visible:ring-white/25 disabled:opacity-50 disabled:cursor-not-allowed hover:border-graphite-950/[0.18] dark:hover:border-white/[0.2] hover:bg-white/90 dark:hover:bg-white/[0.09] {open ? 'border-graphite-900 dark:border-white/50 ring-2 ring-graphite-950/25 dark:ring-white/25' : ''}"
   >
     <div class="flex items-center gap-2 min-w-0">
       {#if selectedOption}
         <span class="font-medium truncate">{selectedOption.label}</span>
         {#if selectedOption.badge}
-          <span class="rounded px-1.5 py-0.5 font-mono text-[9.5px] font-semibold tracking-wider uppercase bg-graphite-100 text-graphite-600 dark:bg-graphite-800 dark:text-graphite-300 shrink-0">
+          <span class="rounded px-1.5 py-0.5 font-mono text-[9.5px] font-semibold tracking-wider uppercase bg-graphite-100 text-graphite-600 dark:bg-white/[0.08] dark:text-graphite-300 shrink-0">
             {selectedOption.badge}
           </span>
         {/if}
@@ -111,7 +111,7 @@
     <StreamlineIcon
       name="ChevronDown"
       size={13}
-      class="text-graphite-400 transition-transform duration-150 shrink-0 {open ? 'rotate-180 text-sky-500' : ''}"
+      class="text-graphite-400 transition-transform duration-150 ease-[var(--ease-spring)] shrink-0 {open ? 'rotate-180 text-graphite-950 dark:text-graphite-50' : ''}"
     />
   </button>
 
@@ -119,10 +119,10 @@
   {#if open}
     <div
       id={listboxId}
-      transition:fly={{ y: -4, duration: 140, easing: cubicOut }}
+      transition:fly={{ y: -4, duration: 150, easing: cubicOut }}
       role="listbox"
       tabindex="-1"
-      class="absolute z-50 left-0 right-0 mt-1.5 rounded-lg border border-graphite-200 dark:border-graphite-700 bg-white dark:bg-graphite-900 p-1 shadow-xl max-h-60 overflow-y-auto"
+      class="board-dropdown absolute z-50 left-0 right-0 mt-1.5 rounded-lg border border-graphite-950/[0.08] dark:border-white/[0.1] p-1 max-h-60 overflow-y-auto origin-top backdrop-blur-2xl"
     >
       {#each options as opt (opt.value)}
         {@const isSelected = opt.value === value}
@@ -131,15 +131,15 @@
           role="option"
           aria-selected={isSelected}
           onclick={() => select(opt.value)}
-          class="w-full rounded-md px-2.5 py-2 text-left text-xs transition-colors flex items-center justify-between gap-2 {isSelected
-            ? 'bg-sky-50 text-sky-900 dark:bg-sky-950/60 dark:text-sky-200 font-medium'
-            : 'text-graphite-800 dark:text-graphite-200 hover:bg-graphite-100 dark:hover:bg-graphite-800'}"
+          class="w-full rounded-md px-2.5 py-2 text-left text-xs transition-[background-color,color,transform] duration-150 active:scale-[0.99] flex items-center justify-between gap-2 {isSelected
+            ? 'bg-graphite-950/[0.06] dark:bg-white/[0.1] text-graphite-950 dark:text-graphite-50 font-medium'
+            : 'text-graphite-800 dark:text-graphite-200 hover:bg-graphite-950/[0.045] dark:hover:bg-white/[0.07]'}"
         >
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
               <span class="truncate">{opt.label}</span>
               {#if opt.badge}
-                <span class="rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase {isSelected ? 'bg-sky-200/60 text-sky-800 dark:bg-sky-900 dark:text-sky-300' : 'bg-graphite-100 text-graphite-600 dark:bg-graphite-800 dark:text-graphite-400'}">
+                <span class="rounded px-1.5 py-0.5 font-mono text-[9px] font-semibold uppercase {isSelected ? 'bg-graphite-950/[0.08] text-graphite-700 dark:bg-white/[0.12] dark:text-graphite-200' : 'bg-graphite-100 text-graphite-600 dark:bg-white/[0.08] dark:text-graphite-400'}">
                   {opt.badge}
                 </span>
               {/if}
@@ -152,7 +152,7 @@
           </div>
 
           {#if isSelected}
-            <StreamlineIcon name="Check" size={13} class="text-sky-600 dark:text-sky-400 shrink-0" />
+            <StreamlineIcon name="Check" size={13} class="text-graphite-950 dark:text-graphite-50 shrink-0" />
           {/if}
         </button>
       {/each}
