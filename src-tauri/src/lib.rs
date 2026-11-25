@@ -5,40 +5,80 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{
-    atomic::{AtomicU16, Ordering},
+    atomic::{AtomicBool, AtomicU16, Ordering},
     Arc, Mutex,
 };
 use std::time::Duration;
-use tauri::{Manager, RunEvent, State, WindowEvent};
+use tauri::{
+    menu::{Menu, MenuItem, PredefinedMenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager, RunEvent, State, WindowEvent,
+};
+
+fn send_control_post(port: u16, token: &str, path: &str) {
+    if port < 8000 {
+        return;
+    }
+    if let Ok(mut stream) = TcpStream::connect_timeout(
+        &SocketAddr::from(([127, 0, 0, 1], port)),
+        Duration::from_millis(450),
+    ) {
+        let _ = stream.set_write_timeout(Some(Duration::from_millis(450)));
+        let _ = stream.set_read_timeout(Some(Duration::from_millis(450)));
+        let req = format!(
+            "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Switchboard-Token: {token}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        if stream.write_all(req.as_bytes()).is_ok() {
+            let _ = stream.flush();
+            let mut ack = [0u8; 64];
+            let _ = std::io::Read::read(&mut stream, &mut ack);
+        }
+    }
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn read_close_to_tray_setting(app: &tauri::App) -> bool {
+    let Ok(dir) = app.path().app_data_dir() else {
+        return true;
+    };
+    let cfg_path = dir.join("mcp-switchboard.json");
+    let Ok(raw) = std::fs::read_to_string(cfg_path) else {
+        return true;
+    };
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return true;
+    };
+    parsed
+        .get("settings")
+        .and_then(|s| s.get("closeToTray"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
 
 /// Runtime state for the managed Node.js sidecar process.
 struct SidecarState {
     child: Mutex<Option<Child>>,
     port: Arc<AtomicU16>,
     token: String,
-    error: Mutex<Option<String>>,
+    error: Arc<Mutex<Option<String>>>,
+    close_to_tray: AtomicBool,
+    quitting: AtomicBool,
 }
 
 impl SidecarState {
     /// Gracefully ask the sidecar to shut down child MCP processes, then force-kill if needed.
     fn shutdown(&self) {
-        let port = self.port.load(Ordering::SeqCst);
+        let port = self.port.swap(0, Ordering::SeqCst);
 
         // 1. Trigger authenticated graceful HTTP shutdown so Node.js kills MCP children + cloudflared
-        if port >= 8000 {
-            if let Ok(mut stream) = TcpStream::connect_timeout(
-                &SocketAddr::from(([127, 0, 0, 1], port)),
-                Duration::from_millis(300),
-            ) {
-                let _ = stream.set_write_timeout(Some(Duration::from_millis(300)));
-                let req = format!(
-                    "POST /api/shutdown HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nX-Switchboard-Token: {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                    self.token
-                );
-                let _ = stream.write_all(req.as_bytes());
-                let _ = stream.flush();
-            }
-        }
+        send_control_post(port, &self.token, "/api/shutdown");
 
         // 2. Enforce strict process-tree termination so zero orphan processes survive
         if let Ok(mut guard) = self.child.lock() {
@@ -117,11 +157,19 @@ fn get_sidecar_error(state: State<'_, SidecarState>) -> Option<String> {
 
 #[tauri::command]
 fn prepare_for_update(state: State<'_, SidecarState>) {
+    state.quitting.store(true, Ordering::SeqCst);
     state.shutdown();
 }
 
 #[tauri::command]
-fn relaunch_app(app: tauri::AppHandle) {
+fn set_close_to_tray(enabled: bool, state: State<'_, SidecarState>) {
+    state.close_to_tray.store(enabled, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn relaunch_app(app: tauri::AppHandle, state: State<'_, SidecarState>) {
+    state.quitting.store(true, Ordering::SeqCst);
+    state.shutdown();
     app.restart();
 }
 
@@ -244,6 +292,7 @@ fn resolve_sidecar_script(app: &tauri::App) -> Option<PathBuf> {
 fn spawn_sidecar(
     app: &tauri::App,
     port_store: Arc<AtomicU16>,
+    error_store: Arc<Mutex<Option<String>>>,
     control_token: &str,
 ) -> Result<Child, String> {
     let script = resolve_sidecar_script(app)
@@ -261,7 +310,7 @@ fn spawn_sidecar(
     cmd.arg(&script)
         .current_dir(&work_dir)
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
+        .stderr(Stdio::piped());
 
     // Enforce parent PID lifecycle watchdog and Rust-owned control plane auth token
     cmd.env("MCP_SWITCHBOARD_PARENT_PID", std::process::id().to_string());
@@ -286,13 +335,49 @@ fn spawn_sidecar(
         }
     })?;
 
+    let last_stderr = Arc::new(Mutex::new(None::<String>));
+    if let Some(stderr) = child.stderr.take() {
+        let last_stderr_ref = Arc::clone(&last_stderr);
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                eprintln!("{line}");
+                let trimmed = line.trim();
+                if !trimmed.is_empty() {
+                    if let Ok(mut guard) = last_stderr_ref.lock() {
+                        *guard = Some(trimmed.to_string());
+                    }
+                }
+            }
+        });
+    }
+
     if let Some(stdout) = child.stdout.take() {
+        let err_store_ref = Arc::clone(&error_store);
+        let last_stderr_ref = Arc::clone(&last_stderr);
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
+            let mut reported_port = false;
             for line in reader.lines().map_while(Result::ok) {
                 if let Some(raw_port) = line.strip_prefix("SWITCHBOARD_READY_PORT=") {
                     if let Ok(parsed) = raw_port.trim().parse::<u16>() {
                         port_store.store(parsed, Ordering::SeqCst);
+                        reported_port = true;
+                    }
+                }
+            }
+            // If stdout closed before reporting a port, surface the sidecar crash immediately to UI.
+            if !reported_port {
+                std::thread::sleep(Duration::from_millis(50));
+                let detail = last_stderr_ref
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone())
+                    .unwrap_or_else(|| "Sidecar exited before reporting readiness.".to_string());
+                if let Ok(mut err_guard) = err_store_ref.lock() {
+                    if err_guard.is_none() {
+                        *err_guard =
+                            Some(format!("MCP Switchboard sidecar failed to start: {detail}"));
                     }
                 }
             }
@@ -305,6 +390,7 @@ fn spawn_sidecar(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let port_store = Arc::new(AtomicU16::new(0));
+    let error_store = Arc::new(Mutex::new(None));
     let control_token = generate_control_token();
     let spawn_token = control_token.clone();
 
@@ -312,7 +398,9 @@ pub fn run() {
         child: Mutex::new(None),
         port: Arc::clone(&port_store),
         token: control_token,
-        error: Mutex::new(None),
+        error: Arc::clone(&error_store),
+        close_to_tray: AtomicBool::new(true),
+        quitting: AtomicBool::new(false),
     };
 
     let app = tauri::Builder::default()
@@ -323,11 +411,21 @@ pub fn run() {
             get_sidecar_token,
             get_sidecar_error,
             prepare_for_update,
+            set_close_to_tray,
             relaunch_app
         ])
         .setup(move |app| {
             let state = app.state::<SidecarState>();
-            match spawn_sidecar(app, Arc::clone(&port_store), &spawn_token) {
+            state
+                .close_to_tray
+                .store(read_close_to_tray_setting(app), Ordering::SeqCst);
+
+            match spawn_sidecar(
+                app,
+                Arc::clone(&port_store),
+                Arc::clone(&error_store),
+                &spawn_token,
+            ) {
                 Ok(child) => {
                     if let Ok(mut guard) = state.child.lock() {
                         *guard = Some(child);
@@ -340,21 +438,116 @@ pub fn run() {
                     }
                 }
             }
+
+            let open_item =
+                MenuItem::with_id(app, "open", "Open MCP Switchboard", true, None::<&str>)?;
+            let sep1 = PredefinedMenuItem::separator(app)?;
+            let tunnel_start = MenuItem::with_id(
+                app,
+                "tunnel_start",
+                "Start HTTPS Tunnel",
+                true,
+                None::<&str>,
+            )?;
+            let tunnel_stop =
+                MenuItem::with_id(app, "tunnel_stop", "Stop HTTPS Tunnel", true, None::<&str>)?;
+            let sep2 = PredefinedMenuItem::separator(app)?;
+            let quit_item =
+                MenuItem::with_id(app, "quit", "Quit MCP Switchboard", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(
+                app,
+                &[
+                    &open_item,
+                    &sep1,
+                    &tunnel_start,
+                    &tunnel_stop,
+                    &sep2,
+                    &quit_item,
+                ],
+            )?;
+
+            let mut tray_builder = TrayIconBuilder::with_id("main-tray")
+                .tooltip("MCP Switchboard — Active in background")
+                .menu(&tray_menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app_handle, event| {
+                    let state = app_handle.state::<SidecarState>();
+                    match event.id().as_ref() {
+                        "open" => show_main_window(app_handle),
+                        "tunnel_start" | "tunnel_stop" => {
+                            let port = state.port.load(Ordering::SeqCst);
+                            let token = state.token.clone();
+                            let path = if event.id().as_ref() == "tunnel_start" {
+                                "/api/tunnel/start"
+                            } else {
+                                "/api/tunnel/stop"
+                            };
+                            std::thread::spawn(move || {
+                                send_control_post(port, &token, path);
+                            });
+                        }
+                        "quit" => {
+                            state.quitting.store(true, Ordering::SeqCst);
+                            state.shutdown();
+                            app_handle.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
+                });
+
+            if let Some(icon) = app.default_window_icon().cloned() {
+                tray_builder = tray_builder.icon(icon);
+            }
+            let _tray = tray_builder.build(app)?;
+
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { .. } = event {
+            if let WindowEvent::CloseRequested { api, .. } = event {
                 let state = window.state::<SidecarState>();
-                state.shutdown();
+                if !state.quitting.load(Ordering::SeqCst)
+                    && state.close_to_tray.load(Ordering::SeqCst)
+                {
+                    api.prevent_close();
+                    let _ = window.hide();
+                } else {
+                    state.quitting.store(true, Ordering::SeqCst);
+                    state.shutdown();
+                }
             }
         })
         .build(tauri::generate_context!())
         .expect("error while building MCP Switchboard Tauri application");
 
-    app.run(|app_handle, event| {
-        if let RunEvent::Exit = event {
+    app.run(|app_handle, event| match event {
+        RunEvent::ExitRequested { api, .. } => {
+            let state = app_handle.state::<SidecarState>();
+            if !state.quitting.load(Ordering::SeqCst) && state.close_to_tray.load(Ordering::SeqCst)
+            {
+                api.prevent_exit();
+            }
+        }
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen {
+            has_visible_windows: false,
+            ..
+        } => {
+            show_main_window(app_handle);
+        }
+        RunEvent::Exit => {
             let state = app_handle.state::<SidecarState>();
             state.shutdown();
         }
+        _ => {}
     });
 }
