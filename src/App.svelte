@@ -9,10 +9,11 @@
   import TelemetryStrip from './components/TelemetryStrip.svelte';
   import SwitchboardList from './components/SwitchboardList.svelte';
   import AddMcpModal from './components/AddMcpModal.svelte';
-  import ToolInspectorDrawer from './components/ToolInspectorDrawer.svelte';
+  import ToolInspectorModal from './components/ToolInspectorModal.svelte';
   import LogViewerModal from './components/LogViewerModal.svelte';
-  import HelpDrawer from './components/HelpDrawer.svelte';
+  import ConnectGuideModal from './components/ConnectGuideModal.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
+  import OnboardingView from './components/OnboardingView.svelte';
   import { checkForAppUpdate, isTauriDesktop } from './lib/updater';
   import type {
     AppState,
@@ -34,6 +35,11 @@
       ? 'light'
       : 'dark'
   );
+  let hasExplicitThemePreference = false;
+  try {
+    hasExplicitThemePreference =
+      typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('mcp-switchboard-theme'));
+  } catch {}
 
   let busyServers = $state<Record<string, boolean>>({});
   let tunnelBusy = $state(false);
@@ -47,10 +53,32 @@
   let liveLogEvent = $state<LiveLogEvent | null>(null);
   let helpOpen = $state(false);
   let settingsOpen = $state(false);
+  let onboardingOpen = $state(
+    typeof localStorage !== 'undefined' && !localStorage.getItem('mcp-switchboard-onboarded')
+  );
 
-  // Toast
+  function completeOnboarding(): void {
+    onboardingOpen = false;
+    try {
+      localStorage.setItem('mcp-switchboard-onboarded', '1');
+    } catch {}
+    void api.updateSettings({ onboardingCompleted: true }).catch(() => {});
+  }
+
+  // Toast & Theme transition timers
   let toast = $state<ToastMessage | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
+  let themeSwitchTimer: ReturnType<typeof setTimeout> | undefined;
+
+  async function syncCloseToTrayToNative(enabled: boolean): Promise<void> {
+    if (!isTauriDesktop()) return;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_close_to_tray', { enabled });
+    } catch {
+      // Ignore if unavailable outside Tauri desktop runtime
+    }
+  }
 
   function notify(message: string, type: 'info' | 'error' = 'info'): void {
     toast = { message, type, id: Date.now() };
@@ -67,21 +95,42 @@
     } else {
       root.classList.remove('dark');
     }
-    localStorage.setItem('mcp-switchboard-theme', theme);
+    try {
+      localStorage.setItem('mcp-switchboard-theme', theme);
+    } catch {}
+
+    const targetTheme = theme;
+    if (isTauriDesktop()) {
+      try {
+        void import('@tauri-apps/api/window')
+          .then(({ getCurrentWindow }) => getCurrentWindow().setTheme(targetTheme))
+          .catch(() => {});
+      } catch {}
+    }
   });
 
   let cleanupSse: (() => void) | null = null;
+  let destroyed = false;
 
   async function connectToSidecar(): Promise<boolean> {
     connecting = true;
     connectionError = null;
     try {
       await discoverSidecarBaseUrl({ maxAttempts: 35, intervalMs: 250 });
+      if (destroyed) return false;
       const initial = await api.getState();
+      if (destroyed) return false;
       appState = initial;
-      if (initial?.settings?.theme && !localStorage.getItem('mcp-switchboard-theme')) {
+      if (initial?.settings?.theme && !hasExplicitThemePreference) {
         theme = initial.settings.theme;
       }
+      if (initial?.settings?.onboardingCompleted) {
+        onboardingOpen = false;
+        try {
+          localStorage.setItem('mcp-switchboard-onboarded', '1');
+        } catch {}
+      }
+      void syncCloseToTrayToNative(initial?.settings?.closeToTray ?? true);
       cleanupSse?.();
       cleanupSse = subscribeEvents({
         onState: (nextState) => {
@@ -91,17 +140,24 @@
           liveLogEvent = logPayload;
         },
       });
+      if (destroyed) {
+        cleanupSse?.();
+        cleanupSse = null;
+        return false;
+      }
       connecting = false;
       return true;
     } catch (err) {
-      connectionError = err instanceof Error ? err.message : 'Unable to connect to MCP Switchboard engine.';
+      if (!destroyed) {
+        connectionError = err instanceof Error ? err.message : 'Unable to connect to MCP Switchboard engine.';
+      }
       connecting = false;
       return false;
     }
   }
 
   onMount(() => {
-    let cancelled = false;
+    destroyed = false;
 
     function handleContextMenu(e: MouseEvent): void {
       const target = e.target as HTMLElement | null;
@@ -131,24 +187,24 @@
     window.addEventListener('wheel', handleWheel, { passive: false });
 
     const updateTimer = setTimeout(() => {
-      if (cancelled) return;
+      if (destroyed) return;
       void checkForAppUpdate()
         .then((res) => {
-          if (!cancelled && res.status === 'available') {
+          if (!destroyed && res.status === 'available') {
             availableUpdate = res;
           }
         })
         .catch(() => {});
     }, 3500);
 
-    void connectToSidecar().then(() => {
-      if (cancelled) cleanupSse?.();
-    });
+    void connectToSidecar();
 
     return () => {
-      cancelled = true;
+      destroyed = true;
       clearTimeout(toastTimer);
+      clearTimeout(themeSwitchTimer);
       clearTimeout(updateTimer);
+      document.documentElement.classList.remove('theme-switching');
       cleanupSse?.();
       cleanupSse = null;
       window.removeEventListener('contextmenu', handleContextMenu);
@@ -176,7 +232,7 @@
     const target = e.target as HTMLElement | null;
     const tag = target?.tagName;
     const isTyping = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(target?.isContentEditable);
-    const anyModalOpen = addModalOpen || settingsOpen || helpOpen || Boolean(inspectingServer) || Boolean(logServer);
+    const anyModalOpen = addModalOpen || settingsOpen || helpOpen || onboardingOpen || Boolean(inspectingServer) || Boolean(logServer);
 
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
       e.preventDefault();
@@ -247,22 +303,35 @@
   async function handleSaveSettings(patch: Partial<SwitchboardSettings>): Promise<void> {
     const res = await api.updateSettings(patch);
     if (res.state) appState = res.state;
+    if (patch.closeToTray !== undefined) {
+      await syncCloseToTrayToNative(patch.closeToTray);
+    }
     notify('Settings saved');
   }
 
   function handleToggleTheme(): void {
+    const root = document.documentElement;
+    hasExplicitThemePreference = true;
+    root.classList.add('theme-switching');
+    clearTimeout(themeSwitchTimer);
     theme = theme === 'dark' ? 'light' : 'dark';
     void api.updateSettings({ theme }).catch(() => {});
+    themeSwitchTimer = setTimeout(() => {
+      root.classList.remove('theme-switching');
+    }, 280);
   }
 </script>
 
 <svelte:window onkeydown={handleGlobalShortcut} />
 
-<div class="h-screen w-screen max-w-full max-h-screen overflow-hidden flex flex-col bg-graphite-50 dark:bg-graphite-950 text-graphite-950 dark:text-graphite-50 overscroll-none select-none">
+<div class="relative h-screen w-screen max-w-full max-h-screen overflow-hidden flex flex-col bg-graphite-50 dark:bg-graphite-950 text-graphite-950 dark:text-graphite-50 overscroll-none select-none">
+  <!-- Frosted ambient glow mesh behind header + main -->
+  <div class="glass-ambient-mesh pointer-events-none absolute inset-0 z-0" aria-hidden="true"></div>
+
   {#if availableUpdate}
-    <div class="bg-sky-500/10 border-b border-sky-500/25 px-4 py-2 flex items-center justify-between text-xs text-sky-900 dark:text-sky-200 shrink-0">
+    <div class="relative z-10 border-b border-graphite-200 dark:border-graphite-800 bg-white/80 dark:bg-graphite-900/80 backdrop-blur-md px-4 py-2 flex items-center justify-between text-xs text-graphite-900 dark:text-graphite-100 shrink-0">
       <div class="flex items-center gap-2">
-        <StreamlineIcon name="Download" size={13} class="text-sky-500 animate-pulse" />
+        <StreamlineIcon name="Download" size={13} class="text-graphite-500 animate-pulse" />
         <span>Update <strong>v{availableUpdate.version}</strong> is available for MCP Switchboard.</span>
       </div>
       <div class="flex items-center gap-2">
@@ -293,22 +362,22 @@
     onNotify={notify}
   />
 
-  <main class="flex-1 overflow-y-auto overscroll-contain w-full">
-    <div class="mx-auto max-w-6xl px-4 sm:px-8 py-5 sm:py-6 space-y-4 sm:space-y-6">
+  <main class="relative z-10 flex-1 overflow-y-auto overscroll-contain w-full">
+    <div class="mx-auto max-w-[1080px] px-4 sm:px-6 lg:px-8 py-5 sm:py-6 space-y-4 sm:space-y-5">
       {#if connecting}
         <div class="space-y-4 sm:space-y-6 animate-fade-in">
-          <div class="board-surface grid grid-cols-2 sm:grid-cols-3 rounded-xl border border-graphite-200 dark:border-graphite-800 bg-white dark:bg-graphite-900 overflow-hidden opacity-75">
+          <div class="board-surface grid grid-cols-2 sm:grid-cols-3 rounded-2xl border border-graphite-200/80 dark:border-white/[0.08] overflow-hidden opacity-80">
             {#each [0, 1, 2] as idx (idx)}
-              <div class="px-4 sm:px-6 py-4 space-y-2 {idx < 2 ? 'sm:border-r border-graphite-200 dark:border-graphite-800' : 'col-span-2 sm:col-span-1 border-t sm:border-t-0'}">
-                <div class="h-3 w-20 rounded bg-graphite-200/70 dark:bg-graphite-800 animate-pulse"></div>
-                <div class="h-6 w-14 rounded bg-graphite-200 dark:bg-graphite-800/80 animate-pulse"></div>
+              <div class="px-4 sm:px-6 py-4 space-y-2 {idx < 2 ? 'sm:border-r border-graphite-200/80 dark:border-white/[0.08]' : 'col-span-2 sm:col-span-1 border-t sm:border-t-0 border-graphite-200/80 dark:border-white/[0.08]'}">
+                <div class="h-3 w-20 rounded bg-graphite-200/80 dark:bg-white/[0.07] animate-pulse"></div>
+                <div class="h-6 w-14 rounded bg-graphite-200 dark:bg-white/[0.09] animate-pulse"></div>
               </div>
             {/each}
           </div>
-          <div class="board-surface rounded-xl border border-graphite-200 dark:border-graphite-800 bg-white dark:bg-graphite-900/80 p-8 text-center flex flex-col items-center gap-3">
+          <div class="board-surface rounded-2xl border border-graphite-200/80 dark:border-white/[0.08] p-8 text-center flex flex-col items-center gap-3">
             <div class="relative w-10 h-10 flex items-center justify-center">
-              <div class="absolute inset-0 rounded-full border-2 border-emerald-500/20 border-t-emerald-500 animate-spin"></div>
-              <StreamlineIcon name="Server" size={15} class="text-emerald-500" />
+              <div class="absolute inset-0 rounded-full border-2 border-graphite-900/15 border-t-graphite-900 dark:border-white/15 dark:border-t-white animate-spin"></div>
+              <StreamlineIcon name="Server" size={15} class="text-graphite-500 dark:text-graphite-400" />
             </div>
             <div>
               <h3 class="text-sm font-semibold text-graphite-900 dark:text-graphite-100">
@@ -321,7 +390,7 @@
           </div>
         </div>
       {:else if connectionError && !appState}
-        <div class="rounded-2xl border border-rose-500/30 bg-rose-500/5 dark:bg-rose-950/20 backdrop-blur-md p-8 text-center max-w-lg mx-auto my-12 shadow-xl space-y-4">
+        <div class="board-dropdown rounded-2xl border border-rose-500/30 bg-rose-50/80 dark:bg-rose-950/30 backdrop-blur-md p-8 text-center max-w-lg mx-auto my-12 space-y-4">
           <div class="w-10 h-10 mx-auto rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center">
             <StreamlineIcon name="AlertTriangle" size={18} />
           </div>
@@ -370,18 +439,7 @@
     </div>
   </main>
 
-  <AddMcpModal
-    open={addModalOpen}
-    {editingServer}
-    onClose={() => {
-      addModalOpen = false;
-      editingServer = null;
-    }}
-    onImportJson={handleImportJson}
-    onSaveServer={handleSaveServer}
-  />
-
-  <ToolInspectorDrawer
+  <ToolInspectorModal
     server={inspectingServer}
     onClose={() => (inspectingServer = null)}
   />
@@ -393,10 +451,49 @@
     onNotify={notify}
   />
 
-  <HelpDrawer
+  <ConnectGuideModal
     open={helpOpen}
+    port={appState?.port}
+    tunnel={appState?.tunnel}
+    mcpAuthToken={appState?.settings?.mcpAuthToken}
+    onReplayOnboarding={() => {
+      helpOpen = false;
+      onboardingOpen = true;
+    }}
     onClose={() => (helpOpen = false)}
     onNotify={notify}
+  />
+
+  <!-- Onboarding (z-40): rendered from frame 0, no flash of dashboard skeleton -->
+  {#if onboardingOpen}
+    <OnboardingView
+      port={appState?.port}
+      servers={appState?.servers || []}
+      totals={appState?.totals}
+      tunnel={appState?.tunnel}
+      {busyServers}
+      {connecting}
+      mcpAuthToken={appState?.settings?.mcpAuthToken}
+      onToggleServer={handleToggleServer}
+      onOpenAddModal={() => {
+        editingServer = null;
+        addModalOpen = true;
+      }}
+      onComplete={completeOnboarding}
+      onNotify={notify}
+    />
+  {/if}
+
+  <!-- AddMcpModal (z-50) rendered after OnboardingView (z-40) so "+ Add MCP JSON" from Onboarding works -->
+  <AddMcpModal
+    open={addModalOpen}
+    {editingServer}
+    onClose={() => {
+      addModalOpen = false;
+      editingServer = null;
+    }}
+    onImportJson={handleImportJson}
+    onSaveServer={handleSaveServer}
   />
 
   <SettingsModal
@@ -413,12 +510,12 @@
 
   {#if toast}
     <div
-      transition:fly={{ y: 8, duration: 180, easing: cubicOut }}
+      transition:fly={{ y: 8, duration: 200, easing: cubicOut }}
       role="status"
       aria-live="polite"
-      class="fixed bottom-5 right-5 z-50 rounded-lg border px-3.5 py-2 text-xs font-medium shadow-lg {toast.type === 'error'
-        ? 'border-rose-500/40 bg-rose-950 text-rose-200'
-        : 'border-graphite-700 bg-graphite-900 text-graphite-100'}"
+      class="board-dropdown fixed bottom-5 right-5 z-[60] rounded-xl border px-3.5 py-2 text-xs font-medium {toast.type === 'error'
+        ? 'border-rose-500/35 bg-rose-50/95 text-rose-800 dark:bg-rose-950/95 dark:text-rose-200'
+        : 'border-graphite-200/80 dark:border-white/[0.1] text-graphite-900 dark:text-graphite-100'}"
     >
       {toast.message}
     </div>
