@@ -2,8 +2,8 @@
   <img src="public/app-icon.png" alt="MCP Switchboard Icon" width="92" height="92" />
   <h1>MCP Switchboard</h1>
   <p>
-    <strong>One endpoint. Zero idle token bloat. Native desktop security.</strong><br />
-    Dynamic MCP multiplexer and Cloudflare HTTPS tunnel console for <strong>Gemini Desktop</strong>, built with <strong>Tauri v2</strong>, <strong>Svelte 5</strong>, strict <strong>TypeScript</strong>, and <strong>Node.js</strong>.
+    <strong>Setup once. Connect any IDE or AI agent. Zero idle token bloat.</strong><br />
+    Universal desktop MCP switchboard (<strong>Streamable HTTP</strong>, <strong>Legacy SSE</strong>, <strong>STDIO bridge</strong> &amp; <strong>Cloudflare Tunnel</strong>) for <strong>Claude Code</strong>, <strong>Cursor</strong>, <strong>VS Code Copilot</strong>, <strong>Windsurf</strong>, <strong>Zed</strong>, <strong>Claude Desktop</strong>, <strong>Gemini</strong>, and <strong>ChatGPT</strong>.
   </p>
 
   <p>
@@ -118,12 +118,14 @@ flowchart LR
 - **Installer assets on [Latest Release](https://github.com/Sury2797/MCP-SWITCHBOARD/releases/latest):** pick `*_amd64.AppImage`, `*_amd64.deb`, or `*.x86_64.rpm` (built on Ubuntu 22.04 with WebKitGTK 4.1 for broad glibc compatibility).
 - **Install & runtime behavior:** config persists in `~/.config/com.mcpswitchboard.desktop/mcp-switchboard.json` (or `$XDG_DATA_HOME/com.mcpswitchboard.desktop/mcp-switchboard.json`), and desktop launches automatically prepend `~/.local/bin`, `~/.cargo/bin`, `~/.volta/bin`, and `/usr/local/bin` to `PATH`.
 
-### Connect to Gemini Desktop in 4 Steps
+### Connect Any IDE or AI Agent (Setup Once)
 
-1. Launch **MCP Switchboard** and click `?` (or press `?`) to verify prerequisites in the **Setup & Diagnostics** drawer.
-2. Toggle the MCP servers you want active (or click **+ Add MCP** / `Ctrl+K` to import JSON).
-3. Flip the header **Tunnel** switch **ON** and wait for **Tunnel live**.
-4. Click **Copy URL** (`https://.../mcp`), then open **Gemini Desktop → Settings → Connected Apps → Custom apps → Add a custom app** and paste the URL.
+1. Launch **MCP Switchboard**, click **+ Add MCP** (`Ctrl+K`) to paste JSON from **Claude, Cursor, VS Code, Windsurf, Zed, or GitHub**, and toggle the servers you want active.
+2. Click **Guide (`?`)** to copy the 1-click snippet for your client (and click **Test Live** inside the guide to verify immediately):
+   - **Local IDEs & CLIs (no tunnel needed):** Point **Claude Code**, **Cursor**, **VS Code Copilot**, **Windsurf**, **Zed**, or **Cline** once to `http://127.0.0.1:8000/mcp` (or `http://127.0.0.1:8000/sse` for legacy SSE clients).
+   - **STDIO-only Apps (e.g. Claude Desktop):** Use `npx -y mcp-remote http://127.0.0.1:8000/mcp` or the built-in `server.cjs --stdio` bridge.
+   - **Remote / Web Clients (Gemini Desktop, ChatGPT Connectors, Claude Web):** Flip the **Tunnel** switch **ON**, copy the `https://.../mcp` URL, and optionally set a **Bearer Token** in **Settings** for private tunnel auth.
+3. Toggle servers **ON/OFF** anytime inside Switchboard—every connected client updates automatically (`tools/list_changed`, `prompts/list_changed`, `resources/list_changed`).
 
 ---
 
