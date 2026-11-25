@@ -14,10 +14,18 @@ export class TunnelManager extends EventEmitter {
     this.installHint = null;
     this.localPort = 8000;
     this._startTimer = null;
+    this._startGen = 0;
   }
 
   _emitState() {
     this.emit('state', this.getState());
+  }
+
+  _clearStartTimer() {
+    if (this._startTimer) {
+      clearTimeout(this._startTimer);
+      this._startTimer = null;
+    }
   }
 
   getState() {
@@ -33,9 +41,11 @@ export class TunnelManager extends EventEmitter {
   }
 
   async start(localPort, settings = {}) {
+    const myGen = ++this._startGen;
     if (this.proc) {
       await this.stop();
     }
+    if (myGen !== this._startGen) return this.getState();
 
     this.localPort = localPort;
     this.mode = settings.tunnelMode === 'named' ? 'named' : 'quick';
@@ -47,6 +57,7 @@ export class TunnelManager extends EventEmitter {
 
     // Check cloudflared availability first so we never crash silently
     const probe = await checkBinary('cloudflared', ['--version']);
+    if (myGen !== this._startGen) return this.getState();
     if (!probe.installed) {
       this.status = 'error';
       this.error = 'cloudflared is not installed or not found on PATH.';
@@ -64,7 +75,7 @@ export class TunnelManager extends EventEmitter {
       if (token) {
         args = ['tunnel', 'run', '--token', token];
       } else if (name) {
-        args = ['tunnel', 'run', '--url', `http://localhost:${localPort}`, name];
+        args = ['tunnel', 'run', '--url', `http://127.0.0.1:${localPort}`, name];
       } else {
         this.status = 'error';
         this.error = 'Named Tunnel mode requires either a Cloudflare Tunnel Token or a Named Tunnel name in Settings.';
@@ -74,12 +85,18 @@ export class TunnelManager extends EventEmitter {
 
       if (domain) {
         const cleanDomain = domain.replace(/\/+$/, '');
-        this.publicUrl = cleanDomain.endsWith('/mcp')
+        const candidate = cleanDomain.endsWith('/mcp')
           ? cleanDomain
-          : `${cleanDomain.startsWith('http') ? cleanDomain : `https://${cleanDomain}`}/mcp`;
+          : `${/^https?:\/\//i.test(cleanDomain) ? cleanDomain : `https://${cleanDomain}`}/mcp`;
+        try {
+          const parsed = new URL(candidate);
+          if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+            this.publicUrl = parsed.toString();
+          }
+        } catch {}
       }
     } else {
-      args = ['tunnel', '--no-autoupdate', '--url', `http://localhost:${localPort}`];
+      args = ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${localPort}`];
     }
 
     const proc = spawnManaged(probe.binary || 'cloudflared', args, {
@@ -88,6 +105,7 @@ export class TunnelManager extends EventEmitter {
     this.proc = proc;
 
     const handleChunk = (_stream, chunk) => {
+      if (this.proc !== proc) return;
       const text = chunk.toString('utf8');
       for (const rawLine of text.split(/\r?\n/)) {
         const line = rawLine.trim();
@@ -99,6 +117,7 @@ export class TunnelManager extends EventEmitter {
             this.publicUrl = `${match[0].replace(/\/+$/, '')}/mcp`;
             this.status = 'live';
             this.error = null;
+            this._clearStartTimer();
             this._emitState();
           }
         } else if (
@@ -107,6 +126,7 @@ export class TunnelManager extends EventEmitter {
         ) {
           this.status = 'live';
           this.error = null;
+          this._clearStartTimer();
           this._emitState();
         }
       }
@@ -116,6 +136,10 @@ export class TunnelManager extends EventEmitter {
     proc.stderr?.on('data', (chunk) => handleChunk('stderr', chunk));
 
     proc.on('error', (/** @type {NodeJS.ErrnoException} */ err) => {
+      if (this.proc !== proc) return;
+      this._clearStartTimer();
+      proc.stdout?.removeAllListeners();
+      proc.stderr?.removeAllListeners();
       this.status = 'error';
       this.error = err.code === 'ENOENT'
         ? 'cloudflared binary not found in PATH.'
@@ -127,7 +151,10 @@ export class TunnelManager extends EventEmitter {
 
     proc.on('exit', (code, signal) => {
       const wasActive = this.proc === proc;
+      proc.stdout?.removeAllListeners();
+      proc.stderr?.removeAllListeners();
       if (!wasActive) return;
+      this._clearStartTimer();
       this.proc = null;
       if (this.status !== 'offline') {
         this.status = code === 0 ? 'offline' : 'error';
@@ -140,7 +167,7 @@ export class TunnelManager extends EventEmitter {
     });
 
     // Startup timeout guard (20 seconds)
-    clearTimeout(this._startTimer);
+    this._clearStartTimer();
     this._startTimer = setTimeout(() => {
       if (this.proc === proc && this.status === 'starting') {
         if (this.mode === 'named' && this.publicUrl) {
@@ -160,10 +187,14 @@ export class TunnelManager extends EventEmitter {
   }
 
   async stop() {
-    clearTimeout(this._startTimer);
-    this._startTimer = null;
+    this._startGen += 1;
+    this._clearStartTimer();
     const proc = this.proc;
     this.proc = null;
+    if (proc) {
+      proc.stdout?.removeAllListeners();
+      proc.stderr?.removeAllListeners();
+    }
     this.status = 'offline';
     this.publicUrl = null;
     this.error = null;
