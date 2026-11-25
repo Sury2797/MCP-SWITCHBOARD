@@ -15,6 +15,9 @@ export interface SwitchboardSettings {
   namedTunnelToken: string;
   namedTunnelName: string;
   namedTunnelDomain: string;
+  mcpAuthToken?: string;
+  closeToTray?: boolean;
+  onboardingCompleted?: boolean;
 }
 
 export interface TunnelState {
