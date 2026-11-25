@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import StreamlineIcon from '../lib/icons/StreamlineIcon.svelte';
+  import ServerIcon from '../lib/icons/ServerIcon.svelte';
   import Switch from '../lib/primitives/Switch.svelte';
   import Button from '../lib/primitives/Button.svelte';
   import SegmentedControl from '../lib/primitives/SegmentedControl.svelte';
   import CountUp from '../lib/primitives/CountUp.svelte';
-  import { spotlight } from '../lib/primitives/spotlight';
   import type { McpServerSnapshot } from '../lib/types';
 
   interface Props {
@@ -35,6 +36,26 @@
 
   let query = $state('');
   let filterTab = $state<'all' | 'active' | 'stdio' | 'http'>('all');
+  let copiedServer = $state<string | null>(null);
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
+
+  onDestroy(() => {
+    clearTimeout(copyTimer);
+  });
+
+  const isMac =
+    typeof navigator !== 'undefined' && /mac/i.test(navigator.platform || navigator.userAgent);
+
+  function handleSearchKey(e: KeyboardEvent): void {
+    if (e.key === 'Escape') {
+      if (query) {
+        e.stopPropagation();
+        query = '';
+      } else {
+        searchInputEl?.blur();
+      }
+    }
+  }
 
   const filterOptions = $derived([
     { value: 'all', label: 'All', count: servers.length },
@@ -70,10 +91,26 @@
     });
   });
 
-  async function copyHint(hint: string): Promise<void> {
+  function formatServerError(raw: string): string {
+    const clean = raw.replace(/\s+/g, ' ').trim();
+    if (/MCP error -32000:\s*Connection closed/i.test(clean)) {
+      return 'Server exited before completing MCP handshake';
+    }
+    const withoutCode = clean.replace(/^MCP error -?\d+:\s*/i, '');
+    return withoutCode.length > 130 ? `${withoutCode.slice(0, 127)}…` : withoutCode;
+  }
+
+  async function copyErrorDetails(server: McpServerSnapshot): Promise<void> {
+    const text = server.installHint || server.error || '';
+    if (!text) return;
     try {
-      await navigator.clipboard.writeText(hint);
-      onNotify('Copied install command');
+      await navigator.clipboard.writeText(text);
+      copiedServer = server.name;
+      onNotify(server.installHint ? 'Copied install command' : 'Copied error details');
+      clearTimeout(copyTimer);
+      copyTimer = setTimeout(() => {
+        copiedServer = null;
+      }, 1600);
     } catch {
       onNotify('Unable to access clipboard', 'error');
     }
@@ -94,22 +131,23 @@
           bind:this={searchInputEl}
           type="text"
           bind:value={query}
+          onkeydown={handleSearchKey}
           placeholder="Filter servers or commands…"
           aria-label="Filter MCP servers"
-          class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 pl-9 pr-14 text-xs text-graphite-900 dark:text-graphite-100 placeholder:text-graphite-400 dark:placeholder:text-graphite-500 shadow-xs focus:border-sky-500 focus:ring-1 focus:ring-sky-500/30 focus:outline-none transition-colors"
+          class="w-full h-9 rounded-lg border border-graphite-200 dark:border-graphite-700/80 bg-white dark:bg-graphite-950 pl-9 pr-14 text-xs text-graphite-900 dark:text-graphite-100 placeholder:text-graphite-400 dark:placeholder:text-graphite-500 shadow-xs focus:border-graphite-900 dark:focus:border-white/50 focus:ring-2 focus:ring-graphite-900/15 dark:focus:ring-white/15 focus:outline-none transition-colors duration-200"
         />
         {#if query}
           <button
             type="button"
             onclick={() => (query = '')}
             aria-label="Clear filter"
-            class="absolute right-2 top-1/2 -translate-y-1/2 h-5 w-5 rounded flex items-center justify-center text-graphite-400 hover:text-graphite-700 dark:hover:text-graphite-200 hover:bg-graphite-100 dark:hover:bg-graphite-800 transition-colors"
+            class="absolute right-2 top-1/2 -translate-y-1/2 h-5 w-5 rounded flex items-center justify-center text-graphite-400 hover:text-graphite-700 dark:hover:text-graphite-200 hover:bg-graphite-100 dark:hover:bg-graphite-800 transition-colors duration-200"
           >
             <StreamlineIcon name="X" size={11} />
           </button>
         {:else}
-          <kbd class="hidden sm:inline-flex items-center absolute right-2 top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded border border-graphite-200 dark:border-graphite-800 bg-graphite-50 dark:bg-graphite-900 font-mono text-[10px] text-graphite-400 dark:text-graphite-500 pointer-events-none">
-            Ctrl F
+          <kbd class="hidden sm:inline-flex items-center absolute right-2 top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded border border-graphite-200 dark:border-graphite-800 bg-graphite-50 dark:bg-graphite-900 font-mono text-[10px] text-graphite-500 dark:text-graphite-400 pointer-events-none">
+            {isMac ? '⌘ F' : 'Ctrl F'}
           </kbd>
         {/if}
       </div>
@@ -131,23 +169,30 @@
 
   <!-- Switchboard Table / Rows -->
   {#if servers.length === 0}
-    <div class="board-surface rounded-xl border border-dashed border-graphite-300 dark:border-graphite-800 bg-white dark:bg-graphite-900/60 px-6 py-12 text-center">
-      <p class="text-sm font-medium text-graphite-900 dark:text-graphite-100">
+    <div class="board-surface rounded-2xl border border-dashed border-graphite-300 dark:border-graphite-800 px-6 py-12 text-center space-y-2.5">
+      <p class="text-sm font-semibold text-graphite-950 dark:text-graphite-50">
         No MCP servers configured
       </p>
-      <p class="mt-1.5 text-xs text-graphite-500 dark:text-graphite-400 max-w-md mx-auto">
-        Paste any standard <code class="font-mono">mcpServers</code> JSON snippet from GitHub or MCP Market to register local STDIO or remote HTTP servers in one click.
+      <p class="text-xs text-graphite-600 dark:text-graphite-400 max-w-lg mx-auto leading-relaxed">
+        Paste any MCP config snippet from Antigravity, Claude Desktop, Cursor, VS Code, Windsurf, or Zed to register local STDIO or remote HTTP/SSE servers in one click.
       </p>
-      <div class="mt-4">
+      <p class="font-mono text-[10.5px] text-graphite-500 dark:text-graphite-400 max-w-lg mx-auto">
+        %APPDATA%\Claude · ~/Library/Application Support/Claude · ~/.config/zed · ~/.cursor/mcp.json
+      </p>
+      <div class="pt-2">
         <Button variant="primary" size="sm" onclick={onAdd}>
           <StreamlineIcon name="Plus" size={13} />
-          <span>Paste mcpServers JSON</span>
+          <span>Paste MCP JSON</span>
         </Button>
       </div>
     </div>
   {:else if filtered.length === 0}
-    <div class="board-surface rounded-xl border border-graphite-200 dark:border-graphite-800 bg-white dark:bg-graphite-900/60 p-8 text-center space-y-2.5">
-      <p class="text-xs text-graphite-500 dark:text-graphite-400">
+    <div
+      role="status"
+      aria-live="polite"
+      class="board-surface rounded-2xl border border-graphite-200/80 dark:border-white/[0.08] p-8 text-center space-y-2.5"
+    >
+      <p class="text-xs text-graphite-600 dark:text-graphite-400">
         No servers match {query.trim() ? `"${query.trim()}"` : 'this filter'}.
       </p>
       <Button
@@ -162,7 +207,11 @@
       </Button>
     </div>
   {:else}
-    <div class="board-surface divide-y divide-graphite-200 dark:divide-graphite-800/90 rounded-xl border border-graphite-200 dark:border-graphite-800 bg-white dark:bg-graphite-900 overflow-hidden">
+    <div
+      role="list"
+      aria-label="MCP servers"
+      class="board-surface divide-y divide-graphite-200/80 dark:divide-white/[0.06] rounded-2xl border border-graphite-200/80 dark:border-white/[0.08] overflow-hidden"
+    >
       {#each filtered as server (server.name)}
         {@const isConnected = server.status === 'connected'}
         {@const isStarting = server.status === 'starting'}
@@ -175,58 +224,84 @@
           : server.url}
 
         <div
-          use:spotlight
-          class="px-4 sm:px-6 py-3 sm:py-3.5 transition-colors hover:bg-graphite-50/80 dark:hover:bg-graphite-850/70"
+          role="listitem"
+          class="px-4 sm:px-6 py-3.5 sm:py-4 transition-colors duration-200 hover:bg-graphite-50/90 dark:hover:bg-white/[0.03]"
         >
           <div class="flex items-start sm:items-center justify-between gap-3 sm:gap-4">
-            <!-- Left: Status dot + Identity + Command -->
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2 sm:gap-2.5 flex-wrap">
-                <span
-                  title={server.status}
-                  class="h-2.5 w-2.5 rounded-full shrink-0 {isConnected
-                    ? 'bg-emerald-500'
-                    : isStarting
-                      ? 'bg-amber-400 status-starting'
-                      : isError
-                        ? 'bg-rose-500'
-                        : 'bg-graphite-400 dark:bg-graphite-600'}"
-                ></span>
-
-                <span class="text-[13.5px] sm:text-[14.5px] font-semibold tracking-[-0.01em] text-graphite-950 dark:text-graphite-50 truncate">
-                  {server.name}
-                </span>
-
-                <span
-                  class="rounded-md px-2 py-0.5 font-mono text-[10px] sm:text-[10.5px] font-medium {server.transport === 'stdio'
-                    ? 'bg-graphite-100 text-graphite-600 dark:bg-graphite-800 dark:text-graphite-400'
-                    : 'bg-sky-500/10 text-sky-700 dark:text-sky-400'}"
-                >
-                  {transportLabel}
-                </span>
-
-                {#if isConnected}
-                  <span class="text-xs sm:text-[13px] font-mono text-graphite-600 dark:text-graphite-300 tabular-nums">
-                    {server.toolCount} {server.toolCount === 1 ? 'tool' : 'tools'} · <CountUp value={server.tokenEstimate} prefix="~" suffix=" tok" />
-                  </span>
-                {:else if isStarting}
-                  <span class="text-xs text-amber-600 dark:text-amber-400">Connecting…</span>
-                {:else if server.status === 'off'}
-                  <span class="text-xs text-graphite-400 dark:text-graphite-500 tabular-nums">
-                    Idle · 0 tok
-                  </span>
+            <!-- Left: Server Icon + Status dot + Identity + Command -->
+            <div class="min-w-0 flex-1 flex items-start sm:items-center gap-3.5">
+              <div class="relative shrink-0">
+                {#if isStarting}
+                  <span
+                    aria-hidden="true"
+                    class="connect-ring-pulse pointer-events-none absolute -inset-1 rounded-[14px] border border-amber-500/55 dark:border-amber-400/50"
+                  ></span>
                 {/if}
+                <div
+                  class="relative flex h-10 w-10 items-center justify-center rounded-xl border transition-[border-color,background-color,box-shadow,color] duration-200 {isConnected
+                    ? 'border-emerald-500/35 bg-emerald-500/[0.08] text-emerald-700 dark:text-emerald-400 shadow-[0_0_0_1px_rgba(16,185,129,0.08)]'
+                    : isStarting
+                      ? 'border-amber-500/45 bg-amber-500/[0.1] text-amber-700 dark:text-amber-400'
+                      : isError
+                        ? 'border-rose-500/35 bg-rose-500/[0.08] text-rose-600 dark:text-rose-400'
+                        : 'border-graphite-200/80 dark:border-white/[0.09] bg-graphite-100/70 dark:bg-white/[0.05] text-graphite-600 dark:text-graphite-300'}"
+                >
+                  <ServerIcon name={server.name} command={server.command} url={server.url} size={20} />
+                </div>
               </div>
 
-              <p
-                title={commandPreview}
-                class="mt-1 pl-4.5 sm:pl-5 font-mono text-xs text-graphite-500 dark:text-graphite-400 truncate"
-              >
-                {commandPreview}
-              </p>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 sm:gap-2.5 flex-wrap">
+                  <span
+                    title={server.status}
+                    class="h-1.5 w-1.5 rounded-full shrink-0 {isConnected
+                      ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]'
+                      : isStarting
+                        ? 'bg-amber-400 status-starting'
+                        : isError
+                          ? 'bg-rose-500'
+                          : 'bg-graphite-400 dark:bg-graphite-600'}"
+                  ></span>
+
+                  <span class="text-[13.5px] sm:text-[14.5px] font-semibold tracking-[-0.01em] text-graphite-950 dark:text-graphite-50 truncate">
+                    {server.name}
+                  </span>
+
+                  <!-- Monochrome transport badge -->
+                  <span
+                    class="rounded-md border border-graphite-200 dark:border-white/[0.1] bg-graphite-100/80 dark:bg-white/[0.06] px-2 py-0.5 font-mono text-[10px] sm:text-[10.5px] font-medium text-graphite-700 dark:text-graphite-300"
+                  >
+                    {transportLabel}
+                  </span>
+
+                  {#if isConnected}
+                    <span class="text-xs sm:text-[13px] font-mono text-graphite-600 dark:text-graphite-300 tabular-nums">
+                      {server.toolCount} {server.toolCount === 1 ? 'tool' : 'tools'} · <CountUp value={server.tokenEstimate} prefix="~" suffix=" tok" />
+                    </span>
+                  {:else if isStarting}
+                    <span
+                      class="connect-shimmer relative inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 dark:border-amber-400/25 bg-amber-500/[0.08] px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300"
+                    >
+                      <span class="h-2.5 w-2.5 rounded-full border-[1.5px] border-amber-500/25 border-t-amber-600 dark:border-amber-400/25 dark:border-t-amber-300 connect-arc-spin"></span>
+                      <span>Connecting…</span>
+                    </span>
+                  {:else if server.status === 'off'}
+                    <span class="text-xs text-graphite-400 dark:text-graphite-500 tabular-nums">
+                      Idle · 0 tok
+                    </span>
+                  {/if}
+                </div>
+
+                <p
+                  title={commandPreview}
+                  class="mt-1 font-mono text-xs text-graphite-500 dark:text-graphite-400 truncate"
+                >
+                  {commandPreview}
+                </p>
+              </div>
             </div>
 
-            <!-- Right: Streamline Action Icons + Mechanical Switch -->
+            <!-- Right: Streamline Action Icons + Status Switch -->
             <div class="flex items-center gap-1 shrink-0 pt-0.5 sm:pt-0">
               <Button
                 variant="ghost"
@@ -274,11 +349,12 @@
                 <StreamlineIcon name="Trash2" size={13} />
               </Button>
 
-              <div class="h-4 w-px bg-graphite-200 dark:bg-graphite-800 mx-1 sm:mx-1.5"></div>
+              <div class="h-4 w-px bg-graphite-200 dark:bg-white/[0.1] mx-1 sm:mx-1.5"></div>
 
               <Switch
                 checked={isOn}
                 starting={isStarting}
+                error={isError}
                 disabled={isBusy}
                 label="Toggle {server.name} {isOn ? 'off' : 'on'}"
                 onchange={(next) => onToggle(server.name, next)}
@@ -286,32 +362,60 @@
             </div>
           </div>
 
-          <!-- Inline Error Banner -->
+          <!-- Compact Inline Error Strip -->
           {#if isError && server.error}
-            <div class="mt-2.5 ml-[18px] flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300">
-              <div class="flex items-start gap-2 min-w-0">
-                <StreamlineIcon name="AlertCircle" size={14} class="mt-0.5 text-rose-500 shrink-0" />
-                <div class="min-w-0">
-                  <p class="font-medium break-words">{server.error}</p>
-                  {#if server.installHint}
-                    <div class="mt-1 flex items-center gap-2 flex-wrap">
-                      <code class="font-mono text-[11px] bg-rose-500/10 px-1.5 py-0.5 rounded select-all">
-                        {server.installHint}
-                      </code>
-                      <button
-                        type="button"
-                        onclick={() => server.installHint && void copyHint(server.installHint)}
-                        class="underline text-[11px]"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  {/if}
-                </div>
+            <div
+              role="alert"
+              class="mt-2.5 sm:ml-[54px] flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 rounded-lg border border-rose-500/25 dark:border-rose-400/20 bg-rose-500/[0.04] dark:bg-rose-500/[0.06] px-3 py-1.5 text-xs"
+            >
+              <div class="flex items-center gap-2 min-w-0 flex-1">
+                <StreamlineIcon name="AlertCircle" size={13} class="text-rose-600 dark:text-rose-400 shrink-0" />
+                <p
+                  title={server.error}
+                  class="text-[11.5px] font-medium text-graphite-800 dark:text-graphite-200 leading-snug truncate"
+                >
+                  {formatServerError(server.error)}
+                </p>
+                {#if server.installHint}
+                  <code
+                    title={server.installHint}
+                    class="hidden md:inline-block max-w-[220px] truncate rounded bg-graphite-950/[0.05] dark:bg-white/[0.07] px-1.5 py-0.5 font-mono text-[10.5px] text-graphite-700 dark:text-graphite-300 select-all shrink-0"
+                  >
+                    {server.installHint}
+                  </code>
+                {/if}
               </div>
-              <Button variant="danger" size="xs" onclick={() => onViewLogs(server)}>
-                View Error Log
-              </Button>
+
+              <div class="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onclick={() => void copyErrorDetails(server)}
+                  title={server.installHint ? 'Copy install command' : 'Copy error message'}
+                  class="inline-flex h-7 items-center gap-1 rounded-md border border-graphite-950/[0.08] dark:border-white/[0.1] bg-white/80 dark:bg-white/[0.06] px-2 text-[11px] font-medium text-graphite-700 dark:text-graphite-200 hover:bg-white dark:hover:bg-white/[0.12] transition-colors active:scale-[0.97]"
+                >
+                  <StreamlineIcon name={copiedServer === server.name ? 'Check' : 'Copy'} size={11} />
+                  <span>{copiedServer === server.name ? 'Copied' : 'Copy'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isBusy}
+                  onclick={() => onToggle(server.name, true)}
+                  title="Retry connecting server"
+                  class="inline-flex h-7 items-center gap-1 rounded-md border border-graphite-950/[0.08] dark:border-white/[0.1] bg-white/80 dark:bg-white/[0.06] px-2 text-[11px] font-medium text-graphite-700 dark:text-graphite-200 hover:bg-white dark:hover:bg-white/[0.12] transition-colors active:scale-[0.97] disabled:opacity-40"
+                >
+                  <StreamlineIcon name="RefreshCw" size={11} />
+                  <span>Retry</span>
+                </button>
+                <button
+                  type="button"
+                  onclick={() => onViewLogs(server)}
+                  title="View server logs"
+                  class="inline-flex h-7 items-center gap-1 rounded-md border border-graphite-950/[0.08] dark:border-white/[0.1] bg-white/80 dark:bg-white/[0.06] px-2 text-[11px] font-medium text-graphite-700 dark:text-graphite-200 hover:bg-white dark:hover:bg-white/[0.12] transition-colors active:scale-[0.97]"
+                >
+                  <StreamlineIcon name="Terminal" size={11} />
+                  <span>View Log</span>
+                </button>
+              </div>
             </div>
           {/if}
         </div>
