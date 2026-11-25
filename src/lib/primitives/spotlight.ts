@@ -30,6 +30,10 @@ export const spotlight: Action<HTMLElement> = (node) => {
     destroy() {
       node.removeEventListener('pointermove', onMove);
       node.removeEventListener('pointerleave', onLeave);
+      node.style.removeProperty('--spot-x');
+      node.style.removeProperty('--spot-y');
+      node.style.removeProperty('--spot-opacity');
+      node.classList.remove('spotlight-surface');
     },
   };
 };
