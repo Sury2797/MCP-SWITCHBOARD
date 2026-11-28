@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { flushSync, onMount } from 'svelte';
   import { fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import StreamlineIcon from './lib/icons/StreamlineIcon.svelte';
@@ -14,6 +14,7 @@
   import ConnectGuideModal from './components/ConnectGuideModal.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
   import OnboardingView from './components/OnboardingView.svelte';
+  import GlobalTooltip from './lib/primitives/GlobalTooltip.svelte';
   import { checkForAppUpdate, isTauriDesktop } from './lib/updater';
   import type {
     AppState,
@@ -54,8 +55,12 @@
   let helpOpen = $state(false);
   let settingsOpen = $state(false);
   let onboardingOpen = $state(
-    typeof localStorage !== 'undefined' && !localStorage.getItem('mcp-switchboard-onboarded')
+    typeof localStorage === 'undefined' || !localStorage.getItem('mcp-switchboard-onboarded')
   );
+
+  function dismissOnboarding(): void {
+    onboardingOpen = false;
+  }
 
   function completeOnboarding(): void {
     onboardingOpen = false;
@@ -124,12 +129,16 @@
       if (initial?.settings?.theme && !hasExplicitThemePreference) {
         theme = initial.settings.theme;
       }
-      if (initial?.settings?.onboardingCompleted) {
-        onboardingOpen = false;
-        try {
+      const shouldShowOnboarding =
+        !initial?.settings?.onboardingCompleted || Boolean(initial?.settings?.startAtOnboarding);
+      onboardingOpen = shouldShowOnboarding;
+      try {
+        if (initial?.settings?.onboardingCompleted) {
           localStorage.setItem('mcp-switchboard-onboarded', '1');
-        } catch {}
-      }
+        } else {
+          localStorage.removeItem('mcp-switchboard-onboarded');
+        }
+      } catch {}
       void syncCloseToTrayToNative(initial?.settings?.closeToTray ?? true);
       cleanupSse?.();
       cleanupSse = subscribeEvents({
@@ -309,16 +318,93 @@
     notify('Settings saved');
   }
 
-  function handleToggleTheme(): void {
-    const root = document.documentElement;
-    hasExplicitThemePreference = true;
-    root.classList.add('theme-switching');
-    clearTimeout(themeSwitchTimer);
-    theme = theme === 'dark' ? 'light' : 'dark';
-    void api.updateSettings({ theme }).catch(() => {});
-    themeSwitchTimer = setTimeout(() => {
-      root.classList.remove('theme-switching');
-    }, 280);
+  let themeAnimating = false;
+
+  async function handleToggleTheme(event?: MouseEvent): Promise<void> {
+    const nextTheme: ThemeMode = theme === 'dark' ? 'light' : 'dark';
+    const docWithVT = document as Document & {
+      startViewTransition?: (cb: () => void | Promise<void>) => {
+        ready: Promise<void>;
+        finished: Promise<void>;
+      };
+    };
+
+    const reduced =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+    const originEl = (event?.currentTarget as HTMLElement | null) ?? null;
+    let x =
+      typeof event?.clientX === 'number' && event.clientX > 0
+        ? event.clientX
+        : window.innerWidth - 52;
+    let y =
+      typeof event?.clientY === 'number' && event.clientY > 0 ? event.clientY : 28;
+    if (originEl) {
+      const rect = originEl.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        x = rect.left + rect.width / 2;
+        y = rect.top + rect.height / 2;
+      }
+    }
+
+    const applyThemeNow = (): void => {
+      hasExplicitThemePreference = true;
+      theme = nextTheme;
+      document.documentElement.classList.toggle('dark', nextTheme === 'dark');
+      try {
+        localStorage.setItem('mcp-switchboard-theme', nextTheme);
+      } catch {}
+    };
+
+    if (themeAnimating || reduced || typeof docWithVT.startViewTransition !== 'function') {
+      const root = document.documentElement;
+      if (!reduced) {
+        root.classList.add('theme-switching');
+        clearTimeout(themeSwitchTimer);
+        themeSwitchTimer = setTimeout(() => {
+          root.classList.remove('theme-switching');
+        }, 280);
+      }
+      applyThemeNow();
+      void api.updateSettings({ theme: nextTheme }).catch(() => {});
+      return;
+    }
+
+    themeAnimating = true;
+    try {
+      const transition = docWithVT.startViewTransition(() => {
+        applyThemeNow();
+        flushSync();
+      });
+      await transition.ready;
+
+      const maxRadius = Math.hypot(
+        Math.max(x, window.innerWidth - x),
+        Math.max(y, window.innerHeight - y)
+      );
+
+      const reveal = document.documentElement.animate(
+        {
+          clipPath: [
+            `circle(0px at ${x}px ${y}px)`,
+            `circle(${maxRadius}px at ${x}px ${y}px)`,
+          ],
+        },
+        {
+          duration: 620,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          pseudoElement: '::view-transition-new(root)',
+        }
+      );
+
+      await Promise.allSettled([reveal.finished, transition.finished]);
+    } catch {
+      applyThemeNow();
+    } finally {
+      themeAnimating = false;
+      void api.updateSettings({ theme: nextTheme }).catch(() => {});
+    }
   }
 </script>
 
@@ -473,12 +559,15 @@
       tunnel={appState?.tunnel}
       {busyServers}
       {connecting}
+      {theme}
       mcpAuthToken={appState?.settings?.mcpAuthToken}
+      onToggleTheme={handleToggleTheme}
       onToggleServer={handleToggleServer}
       onOpenAddModal={() => {
         editingServer = null;
         addModalOpen = true;
       }}
+      onSkip={dismissOnboarding}
       onComplete={completeOnboarding}
       onNotify={notify}
     />
@@ -520,4 +609,6 @@
       {toast.message}
     </div>
   {/if}
+
+  <GlobalTooltip />
 </div>
