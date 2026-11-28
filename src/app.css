@@ -224,16 +224,88 @@
     content: "";
     position: absolute;
     inset: 0;
-    width: 45%;
+    width: 48%;
     pointer-events: none;
     background: linear-gradient(
-      90deg,
+      105deg,
       transparent 0%,
-      var(--connect-shimmer, rgba(245, 158, 11, 0.16)) 50%,
+      var(--connect-shimmer, rgba(245, 158, 11, 0.18)) 50%,
       transparent 100%
     );
-    animation: connect-shimmer-sweep 1.6s var(--ease-out-expo) infinite;
+    animation: connect-shimmer-sweep 1.5s var(--ease-out-expo) infinite;
     will-change: transform;
+  }
+
+  .disconnect-shimmer {
+    overflow: hidden;
+  }
+
+  .disconnect-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    width: 48%;
+    pointer-events: none;
+    background: linear-gradient(
+      105deg,
+      transparent 0%,
+      var(--disconnect-shimmer, rgba(148, 163, 184, 0.18)) 50%,
+      transparent 100%
+    );
+    animation: disconnect-shimmer-sweep 1.5s var(--ease-out-expo) infinite;
+    will-change: transform;
+  }
+
+  .row-shimmer-connecting::after,
+  .row-shimmer-disconnecting::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    width: 42%;
+    pointer-events: none;
+    will-change: transform;
+  }
+
+  .row-shimmer-connecting::after {
+    background: linear-gradient(
+      105deg,
+      transparent 0%,
+      rgba(245, 158, 11, 0.09) 48%,
+      rgba(251, 191, 36, 0.13) 52%,
+      transparent 100%
+    );
+    animation: connect-shimmer-sweep 1.8s var(--ease-out-expo) infinite;
+  }
+
+  .dark .row-shimmer-connecting::after {
+    background: linear-gradient(
+      105deg,
+      transparent 0%,
+      rgba(251, 191, 36, 0.06) 46%,
+      rgba(251, 191, 36, 0.11) 52%,
+      transparent 100%
+    );
+  }
+
+  .row-shimmer-disconnecting::after {
+    background: linear-gradient(
+      105deg,
+      transparent 0%,
+      rgba(100, 116, 139, 0.08) 48%,
+      rgba(148, 163, 184, 0.12) 52%,
+      transparent 100%
+    );
+    animation: disconnect-shimmer-sweep 1.8s var(--ease-out-expo) infinite;
+  }
+
+  .dark .row-shimmer-disconnecting::after {
+    background: linear-gradient(
+      105deg,
+      transparent 0%,
+      rgba(148, 163, 184, 0.055) 46%,
+      rgba(226, 232, 240, 0.09) 52%,
+      transparent 100%
+    );
   }
 
   .glass-ambient-mesh {
@@ -368,10 +440,19 @@
 
 @keyframes connect-shimmer-sweep {
   0% {
-    transform: translate3d(-120%, 0, 0);
+    transform: translate3d(-125%, 0, 0);
   }
   100% {
-    transform: translate3d(240%, 0, 0);
+    transform: translate3d(260%, 0, 0);
+  }
+}
+
+@keyframes disconnect-shimmer-sweep {
+  0% {
+    transform: translate3d(260%, 0, 0);
+  }
+  100% {
+    transform: translate3d(-125%, 0, 0);
   }
 }
 
@@ -548,7 +629,11 @@
     transition: opacity 100ms ease, visibility 100ms step-end;
     transform: none !important;
   }
-  .animate-icon-pop {
+  .animate-icon-pop,
+  .connect-shimmer::after,
+  .disconnect-shimmer::after,
+  .row-shimmer-connecting::after,
+  .row-shimmer-disconnecting::after {
     animation: none !important;
   }
 }
