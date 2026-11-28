@@ -7,6 +7,7 @@
   import CustomSelect, { type SelectOption } from '../lib/primitives/CustomSelect.svelte';
   import SegmentedControl, { type SegmentOption } from '../lib/primitives/SegmentedControl.svelte';
   import { BACKDROP_FADE, glassModal } from '../lib/motion';
+  import { detectPlatform, getPlatformConfigPathsHint } from '../lib/platform';
   import type { McpServerSnapshot, ServerSavePayload, TransportType } from '../lib/types';
 
   interface Props {
@@ -120,6 +121,9 @@
     });
   });
 
+  const configPathsHint = getPlatformConfigPathsHint(detectPlatform());
+  const envKeysText = $derived(envPairs.map((p) => p.key).filter(Boolean).join(' '));
+
   interface JsonServerSummary {
     name: string;
     transport: string;
@@ -127,6 +131,7 @@
     command: string | null;
     args: string[];
     url: string | null;
+    envKeys: string;
   }
 
   const jsonValidation = $derived.by(() => {
@@ -160,6 +165,7 @@
           serverUrl?: unknown;
           command?: unknown;
           args?: unknown[];
+          env?: Record<string, unknown>;
         };
         const rawUrl = cfg.url ?? cfg.httpUrl ?? cfg.serverUrl;
         const hasUrl = typeof rawUrl === 'string' && rawUrl.trim().length > 0;
@@ -191,6 +197,10 @@
             servers: [] as JsonServerSummary[],
           };
         }
+        const envKeys =
+          cfg.env && typeof cfg.env === 'object' && !Array.isArray(cfg.env)
+            ? Object.keys(cfg.env).join(' ')
+            : '';
         summaries.push({
           name: entryName.trim(),
           transport: hasUrl ? 'HTTP' : 'STDIO',
@@ -198,6 +208,7 @@
           command: cmdBin,
           args: cmdArgs,
           url: hasUrl ? String(rawUrl).trim() : null,
+          envKeys,
         });
       }
       return { valid: true, error: null, servers: summaries };
@@ -290,12 +301,12 @@
         <div class="flex items-center gap-3 min-w-0">
           <div class="flex h-8 w-8 items-center justify-center rounded-xl border border-graphite-200 dark:border-white/[0.1] bg-graphite-50/90 dark:bg-white/[0.05] text-graphite-700 dark:text-graphite-200 shrink-0 shadow-xs">
             {#if isEditing}
-              <ServerIcon name={editingServer?.name || name} command={command} args={argsText} url={url} size={18} />
-            {:else if tab === 'form' && (name.trim() || command.trim() || argsText.trim() || url.trim())}
-              <ServerIcon name={name} command={command} args={argsText} url={url} size={18} />
+              <ServerIcon name={editingServer?.name || name} command={command} args={argsText} url={url} env={envKeysText} size={18} />
+            {:else if tab === 'form' && (name.trim() || command.trim() || argsText.trim() || url.trim() || envKeysText)}
+              <ServerIcon name={name} command={command} args={argsText} url={url} env={envKeysText} size={18} />
             {:else if tab === 'json' && jsonValidation.valid && jsonValidation.servers.length === 1}
               {@const single = jsonValidation.servers[0]}
-              <ServerIcon name={single.name} command={single.command} args={single.args} url={single.url} size={18} />
+              <ServerIcon name={single.name} command={single.command} args={single.args} url={single.url} env={single.envKeys} size={18} />
             {:else}
               <StreamlineIcon name="Plus" size={14} />
             {/if}
@@ -331,7 +342,7 @@
               Paste any standard <code class="font-mono">mcpServers</code>, <code class="font-mono">servers</code>, or <code class="font-mono">context_servers</code> JSON from GitHub, Antigravity, Claude Desktop, Cursor, VS Code, Windsurf, or Zed.
             </p>
             <p class="font-mono text-[10.5px] text-graphite-500 dark:text-graphite-400 break-words">
-              Paths: %APPDATA%\Claude · ~/Library/Application Support/Claude · ~/.config/zed · ~/.cursor/mcp.json
+              Paths: {configPathsHint}
             </p>
           </div>
 
@@ -362,7 +373,7 @@
                 {#each jsonValidation.servers as s (s.name)}
                   <li class="flex items-center gap-2 break-words">
                     <span class="flex h-5 w-5 items-center justify-center rounded-md border border-graphite-200/80 dark:border-white/[0.1] bg-white/70 dark:bg-white/[0.06] shrink-0">
-                      <ServerIcon name={s.name} command={s.command} args={s.args} url={s.url} size={13} />
+                      <ServerIcon name={s.name} command={s.command} args={s.args} url={s.url} env={s.envKeys} size={13} />
                     </span>
                     <span class="min-w-0 truncate">
                       <span class="font-semibold">{s.name}</span> ({s.transport}) — <span class="opacity-80">{s.target}</span>
