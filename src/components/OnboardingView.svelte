@@ -29,7 +29,7 @@
     servers?: McpServerSnapshot[];
     totals?: SwitchboardTotals;
     tunnel?: TunnelState | null;
-    busyServers?: Record<string, boolean>;
+    busyServers?: Record<string, boolean | 'connecting' | 'disconnecting'>;
     mcpAuthToken?: string;
     connecting?: boolean;
     theme?: ThemeMode;
