@@ -7,7 +7,8 @@
   import SegmentedControl from '../lib/primitives/SegmentedControl.svelte';
   import { glassModal, BACKDROP_FADE } from '../lib/motion';
   import { buildClientGuide, CLIENT_TABS, type ClientPreset, type ClientCategory } from '../lib/clientSnippets';
-  import { HELP_CATEGORIES, HELP_TOPICS, type HelpCategory } from '../lib/helpGuide';
+  import { HELP_CATEGORIES, HELP_TOPICS, resolveTopicCommand, type HelpCategory } from '../lib/helpGuide';
+  import { detectPlatform, type PlatformId } from '../lib/platform';
   import { api } from '../lib/api';
   import type { DiagnosticsReport, TunnelState } from '../lib/types';
 
@@ -41,6 +42,8 @@
   let activeTab = $state<'clients' | 'diagnostics' | 'help'>('clients');
   let helpSearchQuery = $state('');
   let activeHelpCategory = $state<'All' | HelpCategory>('All');
+  let helpPlatform = $state<PlatformId>(detectPlatform());
+  let helpPlatformOverridden = $state(false);
   let copiedKey = $state<string | null>(null);
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   let probeState = $state<{ status: 'idle' | 'probing' | 'ok' | 'error'; detail: string }>({
@@ -88,21 +91,9 @@
 
   const needsTunnel = $derived(Boolean(activeGuide.requiresTunnel ?? selectedMeta.requiresTunnel));
 
-  function detectNativePlatform(): 'win32' | 'darwin' | 'linux' | undefined {
-    const p = diag?.platform;
-    if (p === 'win32' || p === 'darwin' || p === 'linux') return p;
-    if (typeof navigator !== 'undefined') {
-      const ua = (navigator.userAgent || navigator.platform || '').toLowerCase();
-      if (ua.includes('win')) return 'win32';
-      if (ua.includes('mac')) return 'darwin';
-      if (ua.includes('linux')) return 'linux';
-    }
-    return undefined;
-  }
-
   function isCurrentPlatform(platformKey?: 'win32' | 'darwin' | 'linux', osLabel?: string): boolean {
-    const p = detectNativePlatform();
-    if (!p || !platformKey) return false;
+    const p = detectPlatform(diag?.platform);
+    if (!platformKey) return false;
     if (platformKey === p) return true;
     if (osLabel === 'macOS / Linux' && (p === 'darwin' || p === 'linux')) return true;
     return false;
@@ -118,6 +109,13 @@
   });
 
   const CATEGORIES: Array<'All' | ClientCategory> = ['All', 'IDE', 'CLI Agent', 'Desktop & Web', 'Universal'];
+  const CATEGORY_OPTIONS = CATEGORIES.map((c) => ({ value: c, label: c }));
+  const HELP_CATEGORY_OPTIONS = HELP_CATEGORIES.map((c) => ({ value: c, label: c }));
+  const PLATFORM_OPTIONS = [
+    { value: 'win32', label: 'Windows' },
+    { value: 'darwin', label: 'macOS' },
+    { value: 'linux', label: 'Linux' },
+  ];
 
   const filteredClients = $derived.by(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -140,11 +138,12 @@
     return HELP_TOPICS.filter((t) => {
       if (activeHelpCategory !== 'All' && t.category !== activeHelpCategory) return false;
       if (!q) return true;
+      const resolved = resolveTopicCommand(t, helpPlatform);
       return (
         t.title.toLowerCase().includes(q) ||
         t.summary.toLowerCase().includes(q) ||
         t.bullets.some((b) => b.toLowerCase().includes(q)) ||
-        (t.command ? t.command.toLowerCase().includes(q) : false)
+        (resolved.command ? resolved.command.toLowerCase().includes(q) : false)
       );
     });
   });
@@ -155,6 +154,9 @@
     diagLoading = true;
     try {
       diag = await api.getDiagnostics();
+      if (diag?.platform && !helpPlatformOverridden) {
+        helpPlatform = detectPlatform(diag.platform);
+      }
     } catch {
       diag = null;
     } finally {
@@ -429,19 +431,14 @@
                 {/if}
               </div>
 
-              <div class="flex flex-wrap gap-1">
-                {#each CATEGORIES as cat (cat)}
-                  <button
-                    type="button"
-                    onclick={() => (activeCategory = cat)}
-                    class="px-2 py-0.5 rounded-md text-[10.5px] font-medium border transition-all duration-150 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-graphite-950/35 dark:focus-visible:ring-white/40 {activeCategory === cat
-                      ? 'bg-graphite-950 text-white dark:bg-white dark:text-graphite-950 border-transparent shadow-xs'
-                      : 'border-graphite-200 dark:border-white/[0.1] text-graphite-600 dark:text-graphite-400 hover:text-graphite-900 dark:hover:text-graphite-200'}"
-                  >
-                    {cat}
-                  </button>
-                {/each}
-              </div>
+              <SegmentedControl
+                options={CATEGORY_OPTIONS}
+                value={activeCategory}
+                size="xs"
+                wrap={true}
+                ariaLabel="Client category filter"
+                onchange={(v) => (activeCategory = v as 'All' | ClientCategory)}
+              />
 
               <div class="space-y-1 flex-1 min-h-0">
                 {#if filteredClients.length === 0}
@@ -765,45 +762,53 @@
         {:else}
           <!-- A-to-Z Help & FAQ Tab -->
           <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
-            <div class="shrink-0 border-b border-graphite-200/80 dark:border-white/[0.08] px-5 py-3 flex flex-wrap items-center justify-between gap-2.5">
-              <div class="relative flex-1 min-w-[200px] sm:max-w-xs">
-                <StreamlineIcon
-                  name="Search"
-                  size={12}
-                  class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-graphite-400 dark:text-graphite-500"
+            <div class="shrink-0 border-b border-graphite-200/80 dark:border-white/[0.08] px-5 py-3 space-y-2.5">
+              <div class="flex flex-wrap items-center justify-between gap-2.5">
+                <div class="relative flex-1 min-w-[200px] sm:max-w-xs">
+                  <StreamlineIcon
+                    name="Search"
+                    size={12}
+                    class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-graphite-400 dark:text-graphite-500"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Search Help & FAQ topics…"
+                    bind:value={helpSearchQuery}
+                    aria-label="Search Help and FAQ"
+                    class="w-full h-8 rounded-lg border border-graphite-200 dark:border-white/[0.1] bg-graphite-50/80 dark:bg-white/[0.04] pl-8 pr-7 text-xs text-graphite-900 dark:text-graphite-100 placeholder:text-graphite-400 dark:placeholder:text-graphite-500 focus:outline-none focus:border-graphite-900 dark:focus:border-white/50 focus:ring-2 focus:ring-graphite-900/15 dark:focus:ring-white/15 transition-colors"
+                  />
+                  {#if helpSearchQuery}
+                    <button
+                      type="button"
+                      onclick={() => (helpSearchQuery = '')}
+                      aria-label="Clear FAQ search"
+                      class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-graphite-400 hover:text-graphite-700 dark:hover:text-graphite-200"
+                    >
+                      <StreamlineIcon name="X" size={10} />
+                    </button>
+                  {/if}
+                </div>
+
+                <SegmentedControl
+                  options={PLATFORM_OPTIONS}
+                  value={helpPlatform}
+                  size="sm"
+                  ariaLabel="Target OS for install commands"
+                  onchange={(v) => {
+                    helpPlatformOverridden = true;
+                    helpPlatform = v as PlatformId;
+                  }}
                 />
-                <input
-                  type="text"
-                  placeholder="Search Help & FAQ topics…"
-                  bind:value={helpSearchQuery}
-                  aria-label="Search Help and FAQ"
-                  class="w-full h-8 rounded-lg border border-graphite-200 dark:border-white/[0.1] bg-graphite-50/80 dark:bg-white/[0.04] pl-8 pr-7 text-xs text-graphite-900 dark:text-graphite-100 placeholder:text-graphite-400 dark:placeholder:text-graphite-500 focus:outline-none focus:border-graphite-900 dark:focus:border-white/50 focus:ring-2 focus:ring-graphite-900/15 dark:focus:ring-white/15 transition-colors"
-                />
-                {#if helpSearchQuery}
-                  <button
-                    type="button"
-                    onclick={() => (helpSearchQuery = '')}
-                    aria-label="Clear FAQ search"
-                    class="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-graphite-400 hover:text-graphite-700 dark:hover:text-graphite-200"
-                  >
-                    <StreamlineIcon name="X" size={10} />
-                  </button>
-                {/if}
               </div>
 
-              <div class="flex flex-wrap gap-1">
-                {#each HELP_CATEGORIES as cat (cat)}
-                  <button
-                    type="button"
-                    onclick={() => (activeHelpCategory = cat)}
-                    class="px-2.5 py-1 rounded-md text-[10.5px] font-medium border transition-all duration-150 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-graphite-950/35 dark:focus-visible:ring-white/40 {activeHelpCategory === cat
-                      ? 'bg-graphite-950 text-white dark:bg-white dark:text-graphite-950 border-transparent shadow-xs'
-                      : 'border-graphite-200 dark:border-white/[0.1] text-graphite-600 dark:text-graphite-400 hover:text-graphite-900 dark:hover:text-graphite-200'}"
-                  >
-                    {cat}
-                  </button>
-                {/each}
-              </div>
+              <SegmentedControl
+                options={HELP_CATEGORY_OPTIONS}
+                value={activeHelpCategory}
+                size="xs"
+                wrap={true}
+                ariaLabel="Help topic category filter"
+                onchange={(v) => (activeHelpCategory = v as 'All' | HelpCategory)}
+              />
             </div>
 
             <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain p-5 sm:p-6 space-y-3.5">
@@ -824,6 +829,7 @@
               {:else}
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
                   {#each filteredHelpTopics as topic (topic.id)}
+                    {@const resolvedCmd = resolveTopicCommand(topic, helpPlatform)}
                     <article class="rounded-xl border border-graphite-200/80 dark:border-white/[0.09] bg-graphite-50/75 dark:bg-white/[0.03] p-4 flex flex-col justify-between gap-3">
                       <div class="space-y-2">
                         <div class="flex items-start justify-between gap-2">
@@ -844,25 +850,25 @@
                         </ul>
                       </div>
 
-                      {#if topic.command}
+                      {#if resolvedCmd.command}
                         <div class="flex items-center justify-between gap-2 rounded-lg border border-graphite-200 dark:border-white/[0.08] bg-white/85 dark:bg-graphite-950/80 px-2.5 py-1.5">
                           <div class="min-w-0 flex-1">
-                            {#if topic.commandLabel}
+                            {#if resolvedCmd.label}
                               <span class="block text-[9.5px] font-medium text-graphite-500 dark:text-graphite-400">
-                                {topic.commandLabel}
+                                {resolvedCmd.label}
                               </span>
                             {/if}
                             <code class="block font-mono text-[10.5px] text-graphite-800 dark:text-graphite-200 truncate select-all">
-                              {topic.command}
+                              {resolvedCmd.command}
                             </code>
                           </div>
                           <Button
                             variant="ghost"
                             size="xs"
                             iconOnly
-                            onclick={() => copyText(`help-${topic.id}`, topic.commandLabel || topic.title, topic.command || '')}
+                            onclick={() => copyText(`help-${topic.id}`, resolvedCmd.label || topic.title, resolvedCmd.command || '')}
                             title="Copy command"
-                            aria-label="Copy {topic.commandLabel || topic.title}"
+                            aria-label="Copy {resolvedCmd.label || topic.title}"
                           >
                             <StreamlineIcon name={copiedKey === `help-${topic.id}` ? 'Check' : 'Copy'} size={11} />
                           </Button>
