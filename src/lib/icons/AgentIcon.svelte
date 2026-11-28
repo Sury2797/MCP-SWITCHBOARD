@@ -18,6 +18,9 @@
     'roo_code',
     'goose',
     'opencode',
+    'codex',
+    'copilot_cli',
+    'lmstudio',
     'chatgpt',
     'other',
     'web_connectors',
@@ -35,7 +38,11 @@
   const src = $derived(`/icons/agents/${resolvedFile}`);
   const opticalScale = $derived(OPTICAL_SCALE[id] ?? 1);
   const clipShape = $derived(
-    id === 'continue_dev' ? 'rounded-full overflow-hidden' : id === 'warp' ? 'rounded-[5px] overflow-hidden' : ''
+    id === 'continue_dev'
+      ? 'rounded-full overflow-hidden'
+      : id === 'warp' || id === 'kiro' || id === 'amp' || id === 'lmstudio'
+        ? 'rounded-[5px] overflow-hidden'
+        : ''
   );
   const adaptiveFilter = $derived(
     MONO_DARK_AGENTS.has(id)
