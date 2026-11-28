@@ -1,3 +1,5 @@
+import { getInstallCommand, getPlatformLabel, type PlatformId } from './platform';
+
 export type HelpCategory =
   | 'Runtimes'
   | 'Transports'
@@ -12,7 +14,9 @@ export interface HelpTopic {
   summary: string;
   bullets: string[];
   command?: string;
+  commands?: Record<PlatformId, string>;
   commandLabel?: string;
+  commandLabelWithOs?: boolean;
 }
 
 export const HELP_CATEGORIES: Array<'All' | HelpCategory> = [
@@ -23,6 +27,18 @@ export const HELP_CATEGORIES: Array<'All' | HelpCategory> = [
   'Security & Tray',
   'Troubleshooting',
 ];
+
+export function resolveTopicCommand(
+  topic: HelpTopic,
+  platform: PlatformId
+): { command?: string; label?: string } {
+  const command = topic.commands ? topic.commands[platform] : topic.command;
+  if (!command) return {};
+  const label = topic.commandLabelWithOs && topic.commandLabel
+    ? `${topic.commandLabel} (${getPlatformLabel(platform)})`
+    : topic.commandLabel;
+  return { command, label };
+}
 
 export const HELP_TOPICS: HelpTopic[] = [
   {
@@ -47,8 +63,13 @@ export const HELP_TOPICS: HelpTopic[] = [
       'If uvx/Python is not installed, Node.js servers, HTTP servers, the unified /mcp endpoint, and HTTPS Tunnels continue working normally.',
       'Installing uv automatically provides fast isolated Python tool environments via uvx without managing global pip packages.',
     ],
-    command: 'winget install --id astral-sh.uv',
+    commands: {
+      win32: getInstallCommand('uv', 'win32'),
+      darwin: getInstallCommand('uv', 'darwin'),
+      linux: getInstallCommand('uv', 'linux'),
+    },
     commandLabel: 'Install uv (includes uvx)',
+    commandLabelWithOs: true,
   },
   {
     id: 'cloudflared-optional',
@@ -61,8 +82,13 @@ export const HELP_TOPICS: HelpTopic[] = [
       'Required for cloud web apps (ChatGPT Web Connectors, Gemini Web, Claude.ai Web) or connecting from another device over HTTPS.',
       'Quick Tunnels work with zero Cloudflare account; Permanent Named Tunnels keep one fixed domain URL across restarts.',
     ],
-    command: 'winget install --id Cloudflare.cloudflared',
-    commandLabel: 'Install cloudflared (Windows)',
+    commands: {
+      win32: getInstallCommand('cloudflared', 'win32'),
+      darwin: getInstallCommand('cloudflared', 'darwin'),
+      linux: getInstallCommand('cloudflared', 'linux'),
+    },
+    commandLabel: 'Install cloudflared',
+    commandLabelWithOs: true,
   },
   {
     id: 'transports-explained',
@@ -87,7 +113,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       'OFF servers do not spawn child processes (0 MB RAM) and contribute 0 tool schemas (~0 tokens).',
       'Lean (<3,000 tokens): Optimal speed and accuracy across models. Moderate (3,000–10,000): Noticeable prompt overhead. High (>10k): Switch off unused servers.',
       'When you toggle any server ON/OFF or edit it, Switchboard emits live MCP tools/list_changed notifications to connected clients.',
-      'Shortcuts: Ctrl/Cmd+F searches servers, Ctrl/Cmd+K adds an MCP server, and ? opens MCPS Connection & Help.',
+      'Shortcuts: Ctrl/⌘+F searches servers, Ctrl/⌘+K adds an MCP server, and ? opens MCPS Connection & Help.',
     ],
   },
   {
@@ -112,7 +138,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     bullets: [
       'Switchboard binds exclusively to 127.0.0.1 (local machine only) unless you explicitly flip the HTTPS Tunnel switch ON.',
       'Set an Optional Bearer Token in Settings before turning ON a public HTTPS Tunnel so unauthorized callers receive 401 Unauthorized.',
-      'Closing the window hides to the system tray (when "Close to system tray" is enabled) so servers and tunnels stay live; use Quit in the tray menu to stop everything cleanly.',
+      'Closing the window hides to the system tray (Windows, macOS, and Linux) when "Close to system tray" is enabled so servers and tunnels stay live; use Quit in the tray menu to stop everything cleanly.',
       'Secrets inside env vars, HTTP headers, and Cloudflare tokens are never logged and are spawned with minimal explicit handles.',
     ],
   },
@@ -126,7 +152,7 @@ export const HELP_TOPICS: HelpTopic[] = [
       'Click "View Log" on the server row to see the exact stderr line (missing API key, bad folder path, network timeout, or missing binary).',
       'First-run "npx -y ..." servers download the npm package before responding — wait a few seconds or click Retry.',
       'Verify any folder argument (for example @modelcontextprotocol/server-filesystem path) actually exists and is readable.',
-      'If you just installed Node.js, uvx, or cloudflared, click "Re-check" in System Diagnostics (Switchboard scans Windows Registry & user PATH automatically).',
+      'If you just installed Node.js, uvx, or cloudflared, click "Re-check" in System Diagnostics (Switchboard automatically scans system PATH, Homebrew /opt/homebrew/bin, ~/.local/bin, and Windows Registry).',
     ],
   },
 ];
