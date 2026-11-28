@@ -9,7 +9,9 @@ export default {
       },
       fontFamily: {
         sans: [
-          'Inter',
+          '"Plus Jakarta Sans Variable"',
+          '"Plus Jakarta Sans"',
+          '"Inter"',
           '"Segoe UI Variable Text"',
           '"Segoe UI Variable"',
           '-apple-system',
@@ -19,6 +21,7 @@ export default {
           'sans-serif',
         ],
         mono: [
+          '"JetBrains Mono Variable"',
           '"JetBrains Mono"',
           '"Cascadia Code"',
           '"SF Mono"',
