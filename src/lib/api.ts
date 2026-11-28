@@ -28,13 +28,51 @@ export interface DiscoverOptions {
   intervalMs?: number;
 }
 
+async function probeSidecarPort(port: number, timeoutMs = 260, verifyAuth = false): Promise<string | null> {
+  const candidate = `http://127.0.0.1:${port}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${candidate}/health`, { signal: controller.signal });
+    if (!res.ok) return null;
+    const data = (await res.json().catch(() => ({}))) as { service?: string };
+    if (data?.service !== 'mcp-switchboard') return null;
+    if (verifyAuth) {
+      const stateRes = await fetch(`${candidate}/api/state`, {
+        signal: controller.signal,
+        headers: controlToken ? { 'X-Switchboard-Token': controlToken } : {},
+      });
+      if (!stateRes.ok) return null;
+    }
+    return candidate;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function scanFallbackPorts(): Promise<string | null> {
+  try {
+    return await Promise.any(
+      Array.from({ length: 11 }, (_, idx) => 8000 + idx).map(async (port) => {
+        const hit = await probeSidecarPort(port, 300, true);
+        if (!hit) throw new Error('miss');
+        return hit;
+      })
+    );
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Robustly discover and verify the active sidecar HTTP base URL.
- * Polls with retries so startup race conditions never throw a false-positive failure.
+ * Uses direct Tauri port handoff first and parallel loopback fallback so UI connects in milliseconds.
  */
 export async function discoverSidecarBaseUrl({
-  maxAttempts = 35,
-  intervalMs = 250,
+  maxAttempts = 45,
+  intervalMs = 90,
 }: DiscoverOptions = {}): Promise<string> {
   const isTauri = typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__);
 
@@ -51,21 +89,10 @@ export async function discoverSidecarBaseUrl({
         }
         const port = await invoke<number>('get_sidecar_port');
         if (port && Number(port) >= 8000) {
-          const candidate = `http://127.0.0.1:${port}`;
-          try {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 600);
-            const res = await fetch(`${candidate}/health`, { signal: controller.signal });
-            clearTimeout(timer);
-            if (res.ok) {
-              const data = (await res.json().catch(() => ({}))) as { service?: string };
-              if (data?.service === 'mcp-switchboard') {
-                baseUrl = candidate;
-                return baseUrl;
-              }
-            }
-          } catch {
-            // Port reported but socket still finalizing; continue retry
+          const hit = await probeSidecarPort(Number(port), 350, false);
+          if (hit) {
+            baseUrl = hit;
+            return baseUrl;
           }
         }
       } catch (err) {
@@ -76,26 +103,21 @@ export async function discoverSidecarBaseUrl({
       }
     }
 
-    for (let port = 8000; port <= 8010; port += 1) {
-      const candidate = `http://127.0.0.1:${port}`;
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 500);
-        const res = await fetch(`${candidate}/health`, { signal: controller.signal });
-        clearTimeout(timer);
-        if (res.ok) {
-          const data = (await res.json().catch(() => ({}))) as { service?: string };
-          if (data?.service === 'mcp-switchboard') {
-            baseUrl = candidate;
-            return baseUrl;
-          }
-        }
-      } catch {
-        // Continue checking
+    // Outside Tauri (or after initial Tauri wait ticks), probe 8000 first then fan out in parallel
+    if (!isTauri || attempt >= 8) {
+      const hit8000 = await probeSidecarPort(8000, 260, true);
+      if (hit8000) {
+        baseUrl = hit8000;
+        return baseUrl;
+      }
+      const fallbackHit = await scanFallbackPorts();
+      if (fallbackHit) {
+        baseUrl = fallbackHit;
+        return baseUrl;
       }
     }
 
-    await sleep(intervalMs);
+    await sleep(attempt < 8 ? intervalMs : Math.min(220, intervalMs + attempt * 10));
   }
 
   throw new Error('Unable to connect to MCP Switchboard engine. The background process did not respond in time.');
