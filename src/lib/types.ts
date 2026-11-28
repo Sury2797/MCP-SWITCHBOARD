@@ -18,6 +18,7 @@ export interface SwitchboardSettings {
   mcpAuthToken?: string;
   closeToTray?: boolean;
   onboardingCompleted?: boolean;
+  startAtOnboarding?: boolean;
 }
 
 export interface TunnelState {
@@ -103,6 +104,7 @@ export interface ServerTool {
 export interface DiagnosticItem {
   id: string;
   label: string;
+  required?: boolean;
   role: string;
   installed: boolean;
   version: string | null;
