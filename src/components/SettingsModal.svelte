@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick, onDestroy } from 'svelte';
-  import { fade } from 'svelte/transition';
+  import { fade, slide } from 'svelte/transition';
   import StreamlineIcon from '../lib/icons/StreamlineIcon.svelte';
   import Button from '../lib/primitives/Button.svelte';
   import Switch from '../lib/primitives/Switch.svelte';
@@ -249,7 +249,7 @@
         </div>
 
         {#if tunnelMode === 'named'}
-          <div class="space-y-3.5 rounded-xl border border-graphite-200/80 dark:border-white/[0.08] bg-graphite-50/60 dark:bg-graphite-950/60 p-4">
+          <div transition:slide={{ duration: 200 }} class="space-y-3.5 rounded-xl border border-graphite-200/80 dark:border-white/[0.08] bg-graphite-50/60 dark:bg-graphite-950/60 p-4">
             <div>
               <label for="named-domain" class="block text-xs font-medium text-graphite-700 dark:text-graphite-300 mb-1.5">
                 Permanent Domain
