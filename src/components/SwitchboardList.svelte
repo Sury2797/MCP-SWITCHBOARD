@@ -6,12 +6,13 @@
   import Button from '../lib/primitives/Button.svelte';
   import SegmentedControl from '../lib/primitives/SegmentedControl.svelte';
   import CountUp from '../lib/primitives/CountUp.svelte';
+  import OrbLoader from '../lib/primitives/OrbLoader.svelte';
   import { detectPlatform, getPlatformConfigPathsHint, isMacPlatform } from '../lib/platform';
   import type { McpServerSnapshot } from '../lib/types';
 
   interface Props {
     servers?: McpServerSnapshot[];
-    busyServers?: Record<string, boolean>;
+    busyServers?: Record<string, boolean | 'connecting' | 'disconnecting'>;
     searchInputEl?: HTMLInputElement | null;
     onToggle?: (name: string, enable: boolean) => void;
     onAdd?: () => void;
@@ -215,11 +216,14 @@
       class="board-surface divide-y divide-graphite-200/80 dark:divide-white/[0.06] rounded-2xl border border-graphite-200/80 dark:border-white/[0.08] overflow-hidden"
     >
       {#each filtered as server (server.name)}
+        {@const busyMode = busyServers[server.name]}
         {@const isConnected = server.status === 'connected'}
         {@const isStarting = server.status === 'starting'}
+        {@const isDisconnecting = busyMode === 'disconnecting' || (isConnected && Boolean(busyMode))}
+        {@const isConnecting = !isDisconnecting && (isStarting || busyMode === 'connecting' || (!isConnected && Boolean(busyMode)))}
         {@const isError = server.status === 'error'}
-        {@const isBusy = Boolean(busyServers[server.name]) || isStarting}
-        {@const isOn = isConnected || isStarting}
+        {@const isBusy = Boolean(busyMode) || isStarting}
+        {@const isOn = isConnected || isConnecting}
         {@const transportLabel = server.transport === 'stdio' ? 'STDIO' : 'HTTP'}
         {@const commandPreview = server.transport === 'stdio'
           ? `${server.command} ${(server.args || []).join(' ')}`.trim()
@@ -227,26 +231,37 @@
 
         <div
           role="listitem"
-          class="px-4 sm:px-6 py-3.5 sm:py-4 transition-colors duration-200 hover:bg-graphite-50/90 dark:hover:bg-white/[0.03]"
+          class="relative overflow-hidden px-4 sm:px-6 py-3.5 sm:py-4 transition-colors duration-200 {isConnecting
+            ? 'row-shimmer-connecting bg-amber-500/[0.03] dark:bg-amber-400/[0.025]'
+            : isDisconnecting
+              ? 'row-shimmer-disconnecting bg-slate-500/[0.03] dark:bg-slate-400/[0.025]'
+              : 'hover:bg-graphite-50/90 dark:hover:bg-white/[0.03]'}"
         >
-          <div class="flex items-start sm:items-center justify-between gap-3 sm:gap-4">
+          <div class="relative z-10 flex items-start sm:items-center justify-between gap-3 sm:gap-4">
             <!-- Left: Server Icon + Status dot + Identity + Command -->
             <div class="min-w-0 flex-1 flex items-start sm:items-center gap-3.5">
               <div class="relative shrink-0">
-                {#if isStarting}
+                {#if isConnecting}
                   <span
                     aria-hidden="true"
                     class="connect-ring-pulse pointer-events-none absolute -inset-1 rounded-[14px] border border-amber-500/55 dark:border-amber-400/50"
                   ></span>
+                {:else if isDisconnecting}
+                  <span
+                    aria-hidden="true"
+                    class="connect-ring-pulse pointer-events-none absolute -inset-1 rounded-[14px] border border-slate-400/55 dark:border-slate-500/50"
+                  ></span>
                 {/if}
                 <div
-                  class="relative flex h-10 w-10 items-center justify-center rounded-xl border transition-[border-color,background-color,box-shadow,color] duration-200 {isConnected
-                    ? 'border-emerald-500/35 bg-emerald-500/[0.08] text-emerald-700 dark:text-emerald-400 shadow-[0_0_0_1px_rgba(16,185,129,0.08)]'
-                    : isStarting
+                  class="relative flex h-10 w-10 items-center justify-center rounded-xl border transition-[border-color,background-color,box-shadow,color] duration-200 {isDisconnecting
+                    ? 'border-slate-400/45 bg-slate-500/[0.09] text-slate-600 dark:text-slate-300'
+                    : isConnecting
                       ? 'border-amber-500/45 bg-amber-500/[0.1] text-amber-700 dark:text-amber-400'
-                      : isError
-                        ? 'border-rose-500/35 bg-rose-500/[0.08] text-rose-600 dark:text-rose-400'
-                        : 'border-graphite-200/80 dark:border-white/[0.09] bg-graphite-100/70 dark:bg-white/[0.05] text-graphite-600 dark:text-graphite-300'}"
+                      : isConnected
+                        ? 'border-emerald-500/35 bg-emerald-500/[0.08] text-emerald-700 dark:text-emerald-400 shadow-[0_0_0_1px_rgba(16,185,129,0.08)]'
+                        : isError
+                          ? 'border-rose-500/35 bg-rose-500/[0.08] text-rose-600 dark:text-rose-400'
+                          : 'border-graphite-200/80 dark:border-white/[0.09] bg-graphite-100/70 dark:bg-white/[0.05] text-graphite-600 dark:text-graphite-300'}"
                 >
                   <ServerIcon name={server.name} command={server.command} args={server.args} url={server.url} env={server.env} size={20} />
                 </div>
@@ -255,14 +270,16 @@
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2 sm:gap-2.5 flex-wrap">
                   <span
-                    title={server.status}
-                    class="h-1.5 w-1.5 rounded-full shrink-0 {isConnected
-                      ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]'
-                      : isStarting
+                    title={isDisconnecting ? 'disconnecting' : isConnecting ? 'connecting' : server.status}
+                    class="h-1.5 w-1.5 rounded-full shrink-0 {isDisconnecting
+                      ? 'bg-slate-400 status-starting'
+                      : isConnecting
                         ? 'bg-amber-400 status-starting'
-                        : isError
-                          ? 'bg-rose-500'
-                          : 'bg-graphite-400 dark:bg-graphite-600'}"
+                        : isConnected
+                          ? 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.6)]'
+                          : isError
+                            ? 'bg-rose-500'
+                            : 'bg-graphite-400 dark:bg-graphite-600'}"
                   ></span>
 
                   <span class="text-[13.5px] sm:text-[14.5px] font-semibold tracking-[-0.01em] text-graphite-950 dark:text-graphite-50 truncate">
@@ -276,16 +293,23 @@
                     {transportLabel}
                   </span>
 
-                  {#if isConnected}
+                  {#if isDisconnecting}
+                    <span
+                      class="disconnect-shimmer relative inline-flex items-center gap-1.5 rounded-full border border-slate-400/35 dark:border-slate-500/30 bg-slate-500/[0.08] px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:text-slate-300"
+                    >
+                      <OrbLoader size={12} tone="slate" reverse />
+                      <span>Disconnecting…</span>
+                    </span>
+                  {:else if isConnecting}
+                    <span
+                      class="connect-shimmer relative inline-flex items-center gap-1.5 rounded-full border border-amber-500/35 dark:border-amber-400/25 bg-amber-500/[0.09] px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300"
+                    >
+                      <OrbLoader size={12} tone="amber" />
+                      <span>Connecting…</span>
+                    </span>
+                  {:else if isConnected}
                     <span class="text-xs sm:text-[13px] font-mono text-graphite-600 dark:text-graphite-300 tabular-nums">
                       {server.toolCount} {server.toolCount === 1 ? 'tool' : 'tools'} · <CountUp value={server.tokenEstimate} prefix="~" suffix=" tok" />
-                    </span>
-                  {:else if isStarting}
-                    <span
-                      class="connect-shimmer relative inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 dark:border-amber-400/25 bg-amber-500/[0.08] px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300"
-                    >
-                      <span class="h-2.5 w-2.5 rounded-full border-[1.5px] border-amber-500/25 border-t-amber-600 dark:border-amber-400/25 dark:border-t-amber-300 connect-arc-spin"></span>
-                      <span>Connecting…</span>
                     </span>
                   {:else if server.status === 'off'}
                     <span class="text-xs text-graphite-400 dark:text-graphite-500 tabular-nums">
@@ -355,7 +379,8 @@
 
               <Switch
                 checked={isOn}
-                starting={isStarting}
+                starting={isConnecting}
+                disconnecting={isDisconnecting}
                 error={isError}
                 disabled={isBusy}
                 label="Toggle {server.name} {isOn ? 'off' : 'on'}"
