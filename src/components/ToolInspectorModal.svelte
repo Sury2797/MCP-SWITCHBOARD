@@ -94,7 +94,7 @@
       <div class="shrink-0 flex items-center justify-between gap-3 border-b border-graphite-200/80 dark:border-white/[0.08] px-5 py-3.5">
         <div class="flex items-center gap-3 min-w-0">
           <div class="flex h-9 w-9 items-center justify-center rounded-xl border border-graphite-200 dark:border-white/[0.1] bg-graphite-50/90 dark:bg-white/[0.05] text-graphite-700 dark:text-graphite-200 shrink-0 shadow-xs">
-            <ServerIcon name={server.name} command={server.command} url={server.url} size={18} />
+            <ServerIcon name={server.name} command={server.command} args={server.args} url={server.url} size={18} />
           </div>
           <div class="min-w-0">
             <h2 id="tool-inspector-title" class="text-sm font-semibold text-graphite-950 dark:text-graphite-50 truncate">
