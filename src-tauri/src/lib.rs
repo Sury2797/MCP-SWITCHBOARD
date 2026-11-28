@@ -505,6 +505,17 @@ pub fn run() {
                     }
                 });
 
+            #[cfg(target_os = "macos")]
+            {
+                if let Ok(tray_icon) =
+                    tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png"))
+                {
+                    tray_builder = tray_builder.icon(tray_icon).icon_as_template(true);
+                } else if let Some(icon) = app.default_window_icon().cloned() {
+                    tray_builder = tray_builder.icon(icon).icon_as_template(true);
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
             if let Some(icon) = app.default_window_icon().cloned() {
                 tray_builder = tray_builder.icon(icon);
             }
