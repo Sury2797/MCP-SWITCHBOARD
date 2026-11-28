@@ -5,10 +5,11 @@
   import AgentIcon from '../lib/icons/AgentIcon.svelte';
   import ServerIcon from '../lib/icons/ServerIcon.svelte';
   import Button from '../lib/primitives/Button.svelte';
+  import ThemeToggleButton from '../lib/primitives/ThemeToggleButton.svelte';
   import Switch from '../lib/primitives/Switch.svelte';
   import SegmentedControl from '../lib/primitives/SegmentedControl.svelte';
   import CountUp from '../lib/primitives/CountUp.svelte';
-  import BorderBeam from '../lib/primitives/BorderBeam.svelte';
+  import StarBorder from '../lib/primitives/StarBorder.svelte';
   import DotGrid from '../lib/primitives/DotGrid.svelte';
   import { spotlight } from '../lib/primitives/spotlight';
   import { magnet } from '../lib/primitives/magnet';
@@ -19,6 +20,7 @@
     DiagnosticsReport,
     McpServerSnapshot,
     SwitchboardTotals,
+    ThemeMode,
     TunnelState,
   } from '../lib/types';
 
@@ -30,8 +32,11 @@
     busyServers?: Record<string, boolean>;
     mcpAuthToken?: string;
     connecting?: boolean;
+    theme?: ThemeMode;
+    onToggleTheme?: (event: MouseEvent) => void;
     onToggleServer?: (name: string, enable: boolean) => void;
     onOpenAddModal?: () => void;
+    onSkip?: () => void;
     onComplete?: () => void;
     onNotify?: (message: string, type?: 'info' | 'error') => void;
   }
@@ -65,16 +70,21 @@
     busyServers: _busyServers = {},
     mcpAuthToken = '',
     connecting = false,
+    theme = 'dark',
+    onToggleTheme = () => {},
     onToggleServer: _onToggleServer = () => {},
     onOpenAddModal = () => {},
+    onSkip = undefined,
     onComplete = () => {},
     onNotify = () => {},
   }: Props = $props();
 
   let step = $state<1 | 2 | 3>(1);
   let selectedClient = $state<ClientPreset>('cursor');
+  let selectedModeId = $state<string>('');
   let diag = $state<DiagnosticsReport | null>(null);
   let diagLoading = $state(false);
+  let diagAttempted = false;
   let probeState = $state<{ status: 'idle' | 'probing' | 'ok' | 'error'; detail: string }>({
     status: 'idle',
     detail: '',
@@ -93,7 +103,7 @@
   ];
 
   let stepNavEl = $state<HTMLElement | null>(null);
-  let stepBtnEls = $state<Record<number, HTMLButtonElement | null>>({});
+  const stepBtnEls: Record<number, HTMLButtonElement | null> = {};
   let stepPill = $state({ left: 0, width: 0, ready: false });
   let hoverPill = $state({ left: 0, width: 0, visible: false });
 
@@ -111,8 +121,8 @@
   let stageEl = $state<HTMLDivElement | null>(null);
   let hubLeftPortEl = $state<HTMLSpanElement | null>(null);
   let hubRightPortEl = $state<HTMLSpanElement | null>(null);
-  let serverPortEls = $state<Record<string, HTMLSpanElement | null>>({});
-  let clientPortEls = $state<Record<string, HTMLSpanElement | null>>({});
+  const serverPortEls: Record<string, HTMLSpanElement | null> = {};
+  const clientPortEls: Record<string, HTMLSpanElement | null> = {};
   let topoSize = $state({ width: 0, height: 0 });
   let leftBeams = $state<TopologyBeam[]>([]);
   let rightBeams = $state<TopologyBeam[]>([]);
@@ -140,7 +150,14 @@
     const q = clientSearch.trim().toLowerCase();
     return CLIENT_TABS.filter((c) => {
       if (clientCategory !== 'All' && c.category !== clientCategory) return false;
-      if (q && !c.label.toLowerCase().includes(q) && !c.id.toLowerCase().includes(q)) return false;
+      if (
+        q &&
+        !c.label.toLowerCase().includes(q) &&
+        !c.id.toLowerCase().includes(q) &&
+        !(c.keywords?.some((k) => k.toLowerCase().includes(q)))
+      ) {
+        return false;
+      }
       return true;
     });
   });
@@ -185,6 +202,23 @@
 
   const selectedMeta = $derived(CLIENT_TABS.find((c) => c.id === selectedClient) || CLIENT_TABS[0]);
 
+  const activeGuide = $derived.by(() => {
+    const modes = clientGuide.modes;
+    if (modes && modes.length > 0) {
+      return modes.find((m) => m.id === selectedModeId) || modes[0];
+    }
+    return {
+      id: 'default',
+      label: 'Default',
+      subtitle: clientGuide.subtitle,
+      fileHint: clientGuide.fileHint,
+      snippet: clientGuide.snippet,
+      copyLabel: clientGuide.copyLabel,
+      warning: clientGuide.warning,
+      requiresTunnel: selectedMeta.requiresTunnel,
+    };
+  });
+
   const platformSummary = $derived.by(() => {
     const p = diag?.platform;
     if (p === 'win32') return `Windows (${diag?.arch || 'x64'})`;
@@ -219,6 +253,11 @@
     if (hoverPill.visible) hoverPill = { ...hoverPill, visible: false };
   }
 
+  function goToStep(next: 1 | 2 | 3): void {
+    hideHoverPill();
+    step = next;
+  }
+
   function handleStepKey(e: KeyboardEvent): void {
     let nextStep: 1 | 2 | 3 | null = null;
     if (e.key === 'ArrowRight') nextStep = step === 3 ? 1 : ((step + 1) as 1 | 2 | 3);
@@ -228,7 +267,7 @@
     if (!nextStep) return;
 
     e.preventDefault();
-    step = nextStep;
+    goToStep(nextStep);
     void tick().then(() => stepBtnEls[nextStep]?.focus());
   }
 
@@ -323,8 +362,13 @@
 
   $effect(() => {
     void step;
-    hoverPill = { ...hoverPill, visible: false };
-    void tick().then(measureStepPill);
+    let cancelled = false;
+    void tick().then(() => {
+      if (!cancelled) measureStepPill();
+    });
+    return () => {
+      cancelled = true;
+    };
   });
 
   $effect(() => {
@@ -333,13 +377,25 @@
     void simConnecting;
     void selectedClient;
     if (step !== 1) return;
+    let cancelled = false;
     let frameId: number | undefined;
     void tick().then(() => {
-      frameId = requestAnimationFrame(measureTopology);
+      if (!cancelled) frameId = requestAnimationFrame(measureTopology);
     });
     return () => {
+      cancelled = true;
       if (frameId !== undefined) cancelAnimationFrame(frameId);
     };
+  });
+
+  $effect(() => {
+    if (step !== 1 || !stageEl || typeof ResizeObserver === 'undefined') return;
+    const target = stageEl;
+    const ro = new ResizeObserver(() => {
+      measureTopology();
+    });
+    ro.observe(target);
+    return () => ro.disconnect();
   });
 
   onMount(() => {
@@ -364,11 +420,9 @@
       typeof ResizeObserver !== 'undefined'
         ? new ResizeObserver(() => {
             measureStepPill();
-            measureTopology();
           })
         : null;
     if (ro && stepNavEl) ro.observe(stepNavEl);
-    if (ro && stageEl) ro.observe(stageEl);
 
     const onResize = () => {
       measureStepPill();
@@ -391,6 +445,7 @@
   });
 
   async function loadDiagnostics(): Promise<void> {
+    diagAttempted = true;
     diagLoading = true;
     try {
       diag = await api.getDiagnostics();
@@ -402,7 +457,7 @@
   }
 
   $effect(() => {
-    if (step === 2 && !connecting && !diag && !diagLoading) {
+    if (step === 2 && !connecting && !diag && !diagLoading && !diagAttempted) {
       void loadDiagnostics();
     }
   });
@@ -479,9 +534,9 @@
       <img
         src="/app-icon.png"
         alt="MCP Switchboard"
-        width="30"
-        height="30"
-        class="h-7.5 w-7.5 rounded-xl shadow-xs ring-1 ring-black/[0.08] dark:ring-white/[0.12] shrink-0"
+        width="32"
+        height="32"
+        class="h-8 w-8 drop-shadow-xs shrink-0 select-none"
       />
       <span class="hidden xs:inline text-sm font-semibold tracking-[-0.015em] text-graphite-950 dark:text-graphite-50 truncate">
         MCP Switchboard
@@ -524,7 +579,7 @@
             tabindex={active ? 0 : -1}
             onmouseenter={() => showHoverPill(item.id)}
             onkeydown={handleStepKey}
-            onclick={() => (step = item.id)}
+            onclick={() => goToStep(item.id)}
             class="relative z-10 inline-flex items-center gap-1.5 rounded-full px-2.5 sm:px-3.5 py-1.5 text-[11.5px] font-medium transition-[color,transform] duration-200 active:scale-[0.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-graphite-950/35 dark:focus-visible:ring-white/40 {active
               ? 'text-white dark:text-graphite-950'
               : completed
@@ -551,15 +606,18 @@
       </div>
     </nav>
 
-    <Button variant="ghost" size="xs" onclick={onComplete}>
-      <span>Skip</span>
-    </Button>
+    <div class="flex items-center gap-1.5 shrink-0">
+      <ThemeToggleButton {theme} size="xs" variant="ghost" onclick={onToggleTheme} />
+      <Button variant="ghost" size="xs" onclick={() => (onSkip ?? onComplete)?.()}>
+        <span>Skip</span>
+      </Button>
+    </div>
   </header>
 
   <!-- Main Interactive Stage -->
-  <main class="relative z-10 flex-1 mx-auto w-full max-w-5xl px-4 sm:px-8 py-4 sm:py-6 flex flex-col justify-center">
+  <main class="relative z-10 flex-1 mx-auto w-full max-w-5xl px-4 sm:px-8 py-3 sm:py-4 flex flex-col justify-center">
     {#key step}
-      <div in:fly={STEP_SLIDE} class="space-y-5">
+      <div in:fly={STEP_SLIDE} class="space-y-4">
         {#if step === 1}
           <div class="text-center space-y-2 max-w-2xl mx-auto animate-blur-enter">
             <div class="inline-flex items-center gap-2 rounded-full border border-graphite-200/90 dark:border-white/[0.09] bg-white/85 dark:bg-white/[0.05] backdrop-blur-md px-3 py-1 text-[11px] font-medium text-graphite-600 dark:text-graphite-300 shadow-xs">
@@ -575,8 +633,18 @@
           </div>
 
           <!-- Flagship Interactive Topology Canvas -->
-          <section class="board-surface relative rounded-2xl border border-graphite-200/80 dark:border-white/[0.09] p-4 sm:p-6 shadow-xl overflow-hidden">
-            <BorderBeam active={simAnyActive} colorFrom="rgba(161,161,170,0.45)" colorTo="currentColor" duration={7} />
+          <section class="board-surface relative rounded-2xl border border-graphite-200/80 dark:border-white/[0.09] p-4 sm:p-6 shadow-xl">
+            <StarBorder
+              active={simAnyActive}
+              duration={6}
+              stars={2}
+              thickness={1.25}
+              trailLength={0.3}
+              glow={0.6}
+              sparkle={true}
+              hover="lap"
+              clickPulse={true}
+            />
 
             <div
               bind:this={stageEl}
@@ -777,14 +845,6 @@
               <!-- Column 2: Floating Switchboard Core Hub -->
               <div class="relative z-10 flex flex-col items-center justify-center py-2">
                 <div class="relative flex items-center justify-center">
-                  <!-- Subtle concentric orbital halo when active -->
-                  {#if simAnyActive && !reducedMotion}
-                    <div
-                      aria-hidden="true"
-                      class="live-pulse-halo pointer-events-none absolute -inset-3 rounded-[26px] border border-emerald-500/25 dark:border-emerald-400/20"
-                    ></div>
-                  {/if}
-
                   <!-- Left Hub Port -->
                   <span
                     bind:this={hubLeftPortEl}
@@ -804,11 +864,7 @@
                       ? 'border-graphite-400/60 dark:border-white/[0.24] shadow-xl'
                       : 'border-graphite-200/80 dark:border-white/[0.09]'}"
                   >
-                    <BorderBeam active={simAnyActive} colorFrom="rgba(161,161,170,0.5)" colorTo="currentColor" duration={5} />
-
-                    <div class="relative flex h-12 w-12 items-center justify-center rounded-2xl border border-graphite-200/80 dark:border-white/[0.12] bg-white/90 dark:bg-graphite-900 shadow-sm">
-                      <img src="/app-icon.png" alt="Switchboard Hub" width="36" height="36" class="h-9 w-9 rounded-xl" />
-                    </div>
+                    <img src="/app-icon.png" alt="Switchboard Hub" width="48" height="48" class="relative h-12 w-12 drop-shadow-sm select-none" />
 
                     <div class="space-y-0.5">
                       <p class="text-xs font-semibold tracking-[-0.01em] text-graphite-950 dark:text-graphite-50">
@@ -847,7 +903,7 @@
                     AI Clients
                   </span>
                   <span class="font-mono text-[10.5px] text-graphite-400 dark:text-graphite-500">
-                    21+ supported
+                    {CLIENT_TABS.length}+ supported
                   </span>
                 </div>
                 {#each PLAYGROUND_CLIENTS as client (client.id)}
@@ -899,7 +955,7 @@
                 : 'Tip: Toggle any simulated server ON to watch packets route through the hub.'}
             </p>
             <div use:magnet={0.14}>
-              <Button variant="primary" size="md" onclick={() => (step = 2)}>
+              <Button variant="primary" size="md" onclick={() => goToStep(2)}>
                 <span>Continue to System Check</span>
               </Button>
             </div>
@@ -963,14 +1019,23 @@
                               ? 'bg-amber-400 status-starting'
                               : item.installed
                                 ? 'bg-emerald-500'
-                                : 'bg-graphite-400 dark:bg-graphite-600'}"
+                                : item.required
+                                  ? 'bg-rose-500'
+                                  : 'bg-graphite-400 dark:bg-graphite-600'}"
                           ></span>
                           <span class="text-xs font-semibold text-graphite-900 dark:text-graphite-100 truncate">
                             {item.label}
                           </span>
+                          <span
+                            class="rounded px-1.5 py-0.5 text-[9.5px] font-medium shrink-0 {item.required
+                              ? 'bg-graphite-950/10 text-graphite-800 dark:bg-white/[0.12] dark:text-graphite-100'
+                              : 'bg-graphite-100 text-graphite-500 dark:bg-white/[0.05] dark:text-graphite-400'}"
+                          >
+                            {item.required ? 'Required' : 'Optional'}
+                          </span>
                         </div>
                         <span class="rounded-md border border-graphite-200/80 dark:border-white/[0.08] bg-graphite-50/80 dark:bg-white/[0.04] px-2 py-0.5 font-mono text-[10.5px] text-graphite-600 dark:text-graphite-300 truncate max-w-[165px]">
-                          {item.installed ? item.version : 'Optional / missing'}
+                          {item.installed ? item.version : item.required ? 'Missing' : 'Not installed'}
                         </span>
                       </div>
                       <p class="text-[11.5px] text-graphite-500 dark:text-graphite-400 leading-relaxed">
@@ -1003,6 +1068,15 @@
               {/if}
             </div>
 
+            <!-- Clarity note for Node-only setups -->
+            <div class="flex items-start gap-2.5 rounded-xl border border-graphite-200/80 dark:border-white/[0.08] bg-white/80 dark:bg-white/[0.03] px-3.5 py-2.5 text-[11.5px] text-graphite-700 dark:text-graphite-300">
+              <StreamlineIcon name="Info" size={14} class="shrink-0 mt-0.5 text-graphite-500 dark:text-graphite-400" />
+              <p class="leading-relaxed">
+                <strong class="font-semibold text-graphite-950 dark:text-graphite-50">Only have Node.js?</strong>
+                You are already set for 100% of local IDEs (Cursor, VS Code, Claude Desktop, Windsurf, Zed) and npm (<code class="font-mono">npx</code>) or HTTP servers. <code class="font-mono">uvx</code>/Python are optional for Python MCP servers, and <code class="font-mono">cloudflared</code> is only needed if you turn on the remote HTTPS Tunnel.
+              </p>
+            </div>
+
             <!-- Cross-platform OS quick notes -->
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-xl border border-graphite-200/80 dark:border-white/[0.08] bg-white/70 dark:bg-white/[0.02] p-3.5 text-[11px]">
               <div class="space-y-1">
@@ -1027,7 +1101,7 @@
           </section>
 
           <div class="flex items-center justify-between gap-3 pt-1">
-            <Button variant="secondary" size="sm" onclick={() => (step = 1)}>
+            <Button variant="secondary" size="sm" onclick={() => goToStep(1)}>
               <span>Back</span>
             </Button>
             <div class="flex items-center gap-3">
@@ -1037,7 +1111,7 @@
                 </span>
               {/if}
               <div use:magnet={0.14}>
-                <Button variant="primary" size="md" onclick={() => (step = 3)}>
+                <Button variant="primary" size="md" onclick={() => goToStep(3)}>
                   <span>Continue to Connect &amp; Launch</span>
                 </Button>
               </div>
@@ -1045,8 +1119,8 @@
           </div>
 
         {:else}
-          <div class="text-center space-y-2 max-w-2xl mx-auto animate-blur-enter">
-            <h1 class="text-2xl sm:text-[32px] leading-tight font-semibold tracking-[-0.03em] text-graphite-950 dark:text-graphite-50">
+          <div class="text-center space-y-1.5 max-w-2xl mx-auto animate-blur-enter">
+            <h1 class="text-2xl sm:text-[28px] leading-tight font-semibold tracking-[-0.03em] text-graphite-950 dark:text-graphite-50">
               Connect Once &amp; Launch
             </h1>
             <p class="text-xs sm:text-sm text-graphite-600 dark:text-graphite-400 leading-relaxed max-w-xl mx-auto">
@@ -1054,7 +1128,7 @@
             </p>
           </div>
 
-          <section class="board-surface relative rounded-2xl border border-graphite-200/80 dark:border-white/[0.09] p-4 sm:p-6 shadow-xl space-y-4 overflow-hidden">
+          <section class="board-surface relative rounded-2xl border border-graphite-200/80 dark:border-white/[0.09] p-4 sm:p-5 shadow-xl space-y-3 overflow-hidden">
             <!-- Search + Smooth Gliding Category SegmentedControl + Live Probe -->
             <div class="flex flex-wrap items-center justify-between gap-2.5">
               <div class="flex flex-wrap items-center gap-2.5">
@@ -1155,14 +1229,17 @@
                 </Button>
               </div>
             {:else}
-              <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+              <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-1.5">
                 {#each filteredStep3Clients as client (client.id)}
                   {@const selected = selectedClient === client.id}
                   <button
                     type="button"
                     use:spotlight
-                    onclick={() => (selectedClient = client.id)}
-                    class="text-left rounded-xl border px-3 py-2 flex items-center gap-2.5 transition-all duration-150 active:scale-[0.98] {selected
+                    onclick={() => {
+                      selectedClient = client.id;
+                      selectedModeId = '';
+                    }}
+                    class="text-left rounded-xl border px-2.5 py-1.5 flex items-center gap-2 transition-all duration-150 active:scale-[0.98] {selected
                       ? 'bg-graphite-950 text-white dark:bg-white dark:text-graphite-950 border-transparent shadow-xs'
                       : 'border-graphite-200/80 dark:border-white/[0.08] bg-white/80 dark:bg-white/[0.03] text-graphite-800 dark:text-graphite-200 hover:border-graphite-300 dark:hover:border-white/[0.16]'}"
                   >
@@ -1171,53 +1248,71 @@
                       size={18}
                       inverted={selected}
                     />
-                    <span class="text-[11.5px] font-medium truncate flex-1">{client.label}</span>
+                    <span class="text-[11px] font-medium truncate flex-1">{client.label}</span>
                   </button>
                 {/each}
               </div>
             {/if}
 
             <!-- Split Config & OS Locations -->
-            <div class="grid grid-cols-1 lg:grid-cols-[1.35fr_1fr] gap-3.5 pt-1">
+            <div class="grid grid-cols-1 lg:grid-cols-[1.35fr_1fr] gap-3">
               <!-- Config Snippet -->
-              <div class="rounded-xl border border-graphite-200 dark:border-white/[0.1] bg-white/80 dark:bg-white/[0.03] p-4 flex flex-col gap-2.5">
-                <div class="flex items-center justify-between gap-2">
+              <div class="rounded-xl border border-graphite-200 dark:border-white/[0.1] bg-white/80 dark:bg-white/[0.03] p-3.5 flex flex-col gap-2">
+                <div class="flex flex-wrap items-center justify-between gap-2">
                   <div class="flex items-center gap-2 min-w-0">
                     <AgentIcon id={selectedMeta.id} size={18} />
                     <span class="text-xs font-semibold text-graphite-900 dark:text-graphite-100 truncate">
                       {selectedMeta.label}
                     </span>
                     <span class="font-mono text-[10px] uppercase tracking-wider text-graphite-500 dark:text-graphite-400 truncate">
-                      · {clientGuide.fileHint}
+                      · {activeGuide.fileHint}
                     </span>
                   </div>
-                  <Button
-                    variant="secondary"
-                    size="xs"
-                    onclick={() => copyText('step3-snippet', clientGuide.copyLabel, clientGuide.snippet)}
-                    class="shrink-0"
-                  >
-                    <StreamlineIcon name={copiedKey === 'step3-snippet' ? 'Check' : 'Copy'} size={11} />
-                    <span>{copiedKey === 'step3-snippet' ? 'Copied' : 'Copy'}</span>
-                  </Button>
+                  <div class="flex items-center gap-1.5 shrink-0">
+                    {#if clientGuide.modes && clientGuide.modes.length > 1}
+                      <SegmentedControl
+                        size="sm"
+                        options={clientGuide.modes.map((m) => ({ value: m.id, label: m.label }))}
+                        value={activeGuide.id}
+                        ariaLabel="Connection method"
+                        onchange={(v) => (selectedModeId = v)}
+                      />
+                    {/if}
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      onclick={() => copyText('step3-snippet', activeGuide.copyLabel, activeGuide.snippet)}
+                      class="shrink-0"
+                    >
+                      <StreamlineIcon name={copiedKey === 'step3-snippet' ? 'Check' : 'Copy'} size={11} />
+                      <span>{copiedKey === 'step3-snippet' ? 'Copied' : 'Copy'}</span>
+                    </Button>
+                  </div>
                 </div>
 
                 <p class="text-[11.5px] text-graphite-600 dark:text-graphite-300 leading-relaxed">
-                  {clientGuide.subtitle}
+                  {activeGuide.subtitle}
                 </p>
 
-                {#if clientGuide.warning}
-                  <div class="flex items-start gap-2 rounded-lg border border-graphite-300 dark:border-white/[0.12] bg-graphite-50/80 dark:bg-white/[0.04] px-3 py-2 text-[11px] text-graphite-700 dark:text-graphite-300">
+                {#if clientGuide.info}
+                  <div class="flex items-start gap-2 rounded-lg border border-graphite-200 dark:border-white/[0.1] bg-graphite-50/80 dark:bg-white/[0.04] px-3 py-2 text-[11px] text-graphite-700 dark:text-graphite-300">
                     <StreamlineIcon name="Info" size={13} class="shrink-0 mt-0.5 text-graphite-500 dark:text-graphite-400" />
-                    <span>{clientGuide.warning}</span>
+                    <span>{clientGuide.info}</span>
                   </div>
                 {/if}
 
-                <pre class="rounded-lg border border-graphite-200/80 dark:border-white/[0.08] bg-graphite-50/90 dark:bg-graphite-950/75 p-3 font-mono text-[11.5px] leading-relaxed text-graphite-800 dark:text-graphite-200 overflow-x-auto whitespace-pre-wrap [overflow-wrap:anywhere] select-all max-h-48">{clientGuide.snippet}</pre>
+                {#if activeGuide.warning}
+                  <div class="flex items-start gap-2 rounded-lg border border-graphite-300 dark:border-white/[0.12] bg-graphite-50/80 dark:bg-white/[0.04] px-3 py-2 text-[11px] text-graphite-700 dark:text-graphite-300">
+                    <StreamlineIcon name="ShieldAlert" size={13} class="shrink-0 mt-0.5 text-graphite-500 dark:text-graphite-400" />
+                    <span>{activeGuide.warning}</span>
+                  </div>
+                {/if}
+
+                <pre class="rounded-lg border border-graphite-200/80 dark:border-white/[0.08] bg-graphite-50/90 dark:bg-graphite-950/75 p-2.5 font-mono text-[11.5px] leading-relaxed text-graphite-800 dark:text-graphite-200 overflow-x-auto whitespace-pre-wrap [overflow-wrap:anywhere] select-all max-h-40">{activeGuide.snippet}</pre>
               </div>
 
               <!-- Config File Locations & Endpoint Summary -->
-              <div class="rounded-xl border border-graphite-200 dark:border-white/[0.1] bg-white/70 dark:bg-white/[0.02] p-4 flex flex-col justify-between gap-3">
+              <div class="rounded-xl border border-graphite-200 dark:border-white/[0.1] bg-white/70 dark:bg-white/[0.02] p-3.5 flex flex-col justify-between gap-2.5">
                 <div class="space-y-2">
                   <span class="font-mono text-[10px] uppercase tracking-wider text-graphite-500 dark:text-graphite-400 block">
                     Config File Locations
@@ -1274,7 +1369,7 @@
           </section>
 
           <div class="flex items-center justify-between gap-3 pt-1">
-            <Button variant="secondary" size="sm" onclick={() => (step = 2)}>
+            <Button variant="secondary" size="sm" onclick={() => goToStep(2)}>
               <span>Back</span>
             </Button>
             <div use:magnet={0.16} class="relative rounded-lg">
