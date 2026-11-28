@@ -16,6 +16,7 @@
   import OnboardingView from './components/OnboardingView.svelte';
   import GlobalTooltip from './lib/primitives/GlobalTooltip.svelte';
   import { checkForAppUpdate, isTauriDesktop } from './lib/updater';
+  import { detectPlatform, getInstallCommand } from './lib/platform';
   import type {
     AppState,
     LiveLogEvent,
@@ -487,7 +488,7 @@
             <p class="text-xs text-graphite-600 dark:text-graphite-400 mt-1.5 leading-relaxed">
               {#if isTauriDesktop()}
                 {connectionError || 'The background engine took longer than expected to initialize.'}
-                Ensure Node.js is installed (<code class="px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 font-mono text-[11px]">winget install OpenJS.NodeJS.LTS</code>), then click Retry.
+                Ensure Node.js is installed (<code class="px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 font-mono text-[11px]">{getInstallCommand('node', detectPlatform())}</code>), then click Retry.
               {:else}
                 If running in web dev mode, start the local sidecar using <code class="px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 font-mono text-[11px]">npm run sidecar</code>.
               {/if}
