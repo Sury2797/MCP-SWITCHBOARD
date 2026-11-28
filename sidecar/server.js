@@ -19,6 +19,7 @@ import { ConfigStore, parsePastedMcpJson } from './lib/configStore.js';
 import { McpManager } from './lib/mcpManager.js';
 import { TunnelManager } from './lib/tunnelManager.js';
 import { runDiagnostics } from './lib/diagnostics.js';
+import { ensureWindowsRegistryPathsAsync } from './lib/processUtils.js';
 import {
   APP_FAVICON_ICO_BUFFER,
   APP_ICON_128_BUFFER,
@@ -121,10 +122,10 @@ function requireMcpAuth(req, res, next) {
 app.use(['/mcp', '/sse', '/messages'], mcpCors, requireMcpAuth);
 app.use('/health', cors({ origin: true }));
 app.use(['/icon.png', '/apple-touch-icon.png', '/favicon.ico'], cors({ origin: true }));
-app.use('/api', requireLocalControlOrigin, cors({
+app.use('/api', cors({
   origin: (origin, cb) => cb(null, !origin || isLocalOrigin(origin)),
   credentials: true,
-}));
+}), requireLocalControlOrigin);
 app.use(express.json({ limit: '4mb' }));
 
 // Track active Streamable HTTP & legacy SSE sessions with bounded capacity and idle TTL
@@ -809,6 +810,7 @@ async function main() {
   process.stdout.write(`SWITCHBOARD_READY_PORT=${boundPort}\n`);
   console.error(`[Switchboard] MCP endpoint listening at http://localhost:${boundPort}/mcp`);
 
+  void ensureWindowsRegistryPathsAsync();
   await mcpManager.restoreEnabledServers();
 
   if (configStore.getSettings().autoStartTunnel) {
