@@ -38,6 +38,7 @@ export function createDefaultConfig() {
       mcpAuthToken: '',
       closeToTray: true,
       onboardingCompleted: false,
+      startAtOnboarding: false,
     },
     mcpServers: {
       filesystem: {
@@ -73,6 +74,7 @@ const ALLOWED_SETTING_KEYS = new Set([
   'mcpAuthToken',
   'closeToTray',
   'onboardingCompleted',
+  'startAtOnboarding',
 ]);
 
 function assertNoControlChars(value, label) {
@@ -353,7 +355,12 @@ export class ConfigStore {
         cleanPatch.theme = val === 'light' ? 'light' : 'dark';
       } else if (key === 'tunnelMode') {
         cleanPatch.tunnelMode = val === 'named' ? 'named' : 'quick';
-      } else if (key === 'autoStartTunnel' || key === 'closeToTray' || key === 'onboardingCompleted') {
+      } else if (
+        key === 'autoStartTunnel' ||
+        key === 'closeToTray' ||
+        key === 'onboardingCompleted' ||
+        key === 'startAtOnboarding'
+      ) {
         cleanPatch[key] = Boolean(val);
       } else {
         const strVal = String(val ?? '').trim();
