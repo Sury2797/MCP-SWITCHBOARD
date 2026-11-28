@@ -43,7 +43,7 @@
       typeof localStorage !== 'undefined' && Boolean(localStorage.getItem('mcp-switchboard-theme'));
   } catch {}
 
-  let busyServers = $state<Record<string, boolean>>({});
+  let busyServers = $state<Record<string, boolean | 'connecting' | 'disconnecting'>>({});
   let tunnelBusy = $state(false);
   let searchInputEl = $state<HTMLInputElement | null>(null);
 
@@ -276,7 +276,7 @@
   }
 
   async function handleToggleServer(name: string, enable: boolean): Promise<void> {
-    busyServers = { ...busyServers, [name]: true };
+    busyServers = { ...busyServers, [name]: enable ? 'connecting' : 'disconnecting' };
     try {
       const res = await api.toggleServer(name, enable);
       if (res.state) appState = res.state;
