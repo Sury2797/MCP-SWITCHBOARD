@@ -1,3 +1,5 @@
+import '@fontsource-variable/plus-jakarta-sans';
+import '@fontsource-variable/jetbrains-mono';
 import { mount } from 'svelte';
 import App from './App.svelte';
 import './app.css';
