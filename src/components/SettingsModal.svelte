@@ -48,6 +48,7 @@
   let tunnelMode = $state<TunnelMode>('quick');
   let autoStartTunnel = $state(false);
   let closeToTray = $state(true);
+  let startAtOnboarding = $state(false);
   let port = $state(8000);
   let namedTunnelToken = $state('');
   let namedTunnelName = $state('');
@@ -102,6 +103,7 @@
     tunnelMode = settings.tunnelMode || 'quick';
     autoStartTunnel = Boolean(settings.autoStartTunnel);
     closeToTray = settings.closeToTray ?? true;
+    startAtOnboarding = Boolean(settings.startAtOnboarding);
     port = settings.port || 8000;
     namedTunnelToken = settings.namedTunnelToken || '';
     namedTunnelName = settings.namedTunnelName || '';
@@ -146,6 +148,7 @@
         tunnelMode,
         autoStartTunnel,
         closeToTray,
+        startAtOnboarding,
         port: Number(port) || 8000,
         namedTunnelToken: namedTunnelToken.trim(),
         namedTunnelName: namedTunnelName.trim(),
@@ -315,6 +318,21 @@
               tone="neutral"
               label="Close to system tray"
               onchange={(v) => (closeToTray = v)}
+            />
+          </div>
+
+          <div class="flex items-center justify-between gap-3 p-3.5 rounded-xl border border-graphite-200/80 dark:border-white/[0.08] bg-graphite-50/50 dark:bg-graphite-950/40">
+            <div class="min-w-0">
+              <p class="text-xs font-medium text-graphite-900 dark:text-graphite-100">Open on Welcome / Onboarding screen at launch</p>
+              <p class="text-[11px] text-graphite-500 dark:text-graphite-400 mt-0.5 leading-relaxed">
+                Start each launch on the Onboarding flow (click Skip or Launch Switchboard to enter the dashboard).
+              </p>
+            </div>
+            <Switch
+              checked={startAtOnboarding}
+              tone="neutral"
+              label="Open on Onboarding screen at launch"
+              onchange={(v) => (startAtOnboarding = v)}
             />
           </div>
 
