@@ -120,12 +120,21 @@
     });
   });
 
+  interface JsonServerSummary {
+    name: string;
+    transport: string;
+    target: string;
+    command: string | null;
+    args: string[];
+    url: string | null;
+  }
+
   const jsonValidation = $derived.by(() => {
-    if (!jsonText.trim()) return { valid: false, error: null as string | null, servers: [] as Array<{ name: string; transport: string; target: string }> };
+    if (!jsonText.trim()) return { valid: false, error: null as string | null, servers: [] as JsonServerSummary[] };
     try {
       const parsed: unknown = JSON.parse(jsonText);
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        return { valid: false, error: 'Root value must be a JSON object.', servers: [] };
+        return { valid: false, error: 'Root value must be a JSON object.', servers: [] as JsonServerSummary[] };
       }
       const root = parsed as Record<string, unknown>;
       let rawMap = root;
@@ -138,12 +147,12 @@
       }
       const entries = Object.entries(rawMap);
       if (entries.length === 0) {
-        return { valid: false, error: 'No server entries found in JSON.', servers: [] };
+        return { valid: false, error: 'No server entries found in JSON.', servers: [] as JsonServerSummary[] };
       }
-      const summaries: Array<{ name: string; transport: string; target: string }> = [];
+      const summaries: JsonServerSummary[] = [];
       for (const [entryName, rawCfg] of entries) {
         if (!rawCfg || typeof rawCfg !== 'object' || Array.isArray(rawCfg)) {
-          return { valid: false, error: `Entry "${entryName}" must be a JSON object.`, servers: [] };
+          return { valid: false, error: `Entry "${entryName}" must be a JSON object.`, servers: [] as JsonServerSummary[] };
         }
         const cfg = rawCfg as {
           url?: unknown;
@@ -154,16 +163,24 @@
         };
         const rawUrl = cfg.url ?? cfg.httpUrl ?? cfg.serverUrl;
         const hasUrl = typeof rawUrl === 'string' && rawUrl.trim().length > 0;
+        let cmdBin: string | null = null;
+        let cmdArgs: string[] = [];
         let cmdDisplay = '';
         if (typeof cfg.command === 'string' && cfg.command.trim().length > 0) {
-          cmdDisplay = `${cfg.command.trim()} ${(Array.isArray(cfg.args) ? cfg.args : []).join(' ')}`.trim();
+          cmdBin = cfg.command.trim();
+          cmdArgs = Array.isArray(cfg.args) ? cfg.args.map((v) => String(v)) : [];
+          cmdDisplay = `${cmdBin} ${cmdArgs.join(' ')}`.trim();
         } else if (Array.isArray(cfg.command) && cfg.command.length > 0) {
+          cmdBin = String(cfg.command[0]);
+          cmdArgs = cfg.command.slice(1).map((v) => String(v));
           cmdDisplay = cfg.command.map((v) => String(v)).join(' ').trim();
         } else if (cfg.command && typeof cfg.command === 'object') {
           const zedCmd = cfg.command as { path?: unknown; command?: unknown; args?: unknown[] };
           const bin = String(zedCmd.path || zedCmd.command || '').trim();
           if (bin) {
-            cmdDisplay = `${bin} ${(Array.isArray(zedCmd.args) ? zedCmd.args : []).join(' ')}`.trim();
+            cmdBin = bin;
+            cmdArgs = Array.isArray(zedCmd.args) ? zedCmd.args.map((v) => String(v)) : [];
+            cmdDisplay = `${bin} ${cmdArgs.join(' ')}`.trim();
           }
         }
         const hasCmd = cmdDisplay.length > 0;
@@ -171,18 +188,21 @@
           return {
             valid: false,
             error: `Entry "${entryName}" needs either a "command" (STDIO) or "url" (HTTP/SSE).`,
-            servers: [],
+            servers: [] as JsonServerSummary[],
           };
         }
         summaries.push({
           name: entryName.trim(),
           transport: hasUrl ? 'HTTP' : 'STDIO',
           target: hasUrl ? String(rawUrl).trim() : cmdDisplay,
+          command: cmdBin,
+          args: cmdArgs,
+          url: hasUrl ? String(rawUrl).trim() : null,
         });
       }
       return { valid: true, error: null, servers: summaries };
     } catch (err) {
-      return { valid: false, error: err instanceof Error ? err.message : String(err), servers: [] };
+      return { valid: false, error: err instanceof Error ? err.message : String(err), servers: [] as JsonServerSummary[] };
     }
   });
 
@@ -269,8 +289,13 @@
       <div class="flex items-center justify-between gap-3 border-b border-graphite-200/80 dark:border-white/[0.08] px-5 py-3.5 shrink-0">
         <div class="flex items-center gap-3 min-w-0">
           <div class="flex h-8 w-8 items-center justify-center rounded-xl border border-graphite-200 dark:border-white/[0.1] bg-graphite-50/90 dark:bg-white/[0.05] text-graphite-700 dark:text-graphite-200 shrink-0 shadow-xs">
-            {#if isEditing || (tab === 'form' && name.trim())}
-              <ServerIcon name={editingServer?.name || name} command={command} url={url} size={18} />
+            {#if isEditing}
+              <ServerIcon name={editingServer?.name || name} command={command} args={argsText} url={url} size={18} />
+            {:else if tab === 'form' && (name.trim() || command.trim() || argsText.trim() || url.trim())}
+              <ServerIcon name={name} command={command} args={argsText} url={url} size={18} />
+            {:else if tab === 'json' && jsonValidation.valid && jsonValidation.servers.length === 1}
+              {@const single = jsonValidation.servers[0]}
+              <ServerIcon name={single.name} command={single.command} args={single.args} url={single.url} size={18} />
             {:else}
               <StreamlineIcon name="Plus" size={14} />
             {/if}
@@ -333,10 +358,15 @@
                 <StreamlineIcon name="CheckCircle2" size={14} class="text-graphite-700 dark:text-graphite-300 shrink-0" />
                 <span>Detected {jsonValidation.servers.length} {jsonValidation.servers.length === 1 ? 'server' : 'servers'} ready to import:</span>
               </div>
-              <ul class="pl-5 list-disc font-mono text-[11px] space-y-1 text-graphite-700 dark:text-graphite-300">
+              <ul class="space-y-1.5 font-mono text-[11px] text-graphite-700 dark:text-graphite-300">
                 {#each jsonValidation.servers as s (s.name)}
-                  <li class="break-words">
-                    <span class="font-semibold">{s.name}</span> ({s.transport}) — <span class="opacity-80">{s.target}</span>
+                  <li class="flex items-center gap-2 break-words">
+                    <span class="flex h-5 w-5 items-center justify-center rounded-md border border-graphite-200/80 dark:border-white/[0.1] bg-white/70 dark:bg-white/[0.06] shrink-0">
+                      <ServerIcon name={s.name} command={s.command} args={s.args} url={s.url} size={13} />
+                    </span>
+                    <span class="min-w-0 truncate">
+                      <span class="font-semibold">{s.name}</span> ({s.transport}) — <span class="opacity-80">{s.target}</span>
+                    </span>
                   </li>
                 {/each}
               </ul>
