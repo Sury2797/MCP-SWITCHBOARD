@@ -1,4 +1,4 @@
-import { spawn, execFile, execSync } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -69,27 +69,7 @@ export function ensurePlatformPaths() {
         ].filter(Boolean)
       );
 
-      // Read latest User + Machine PATH from Windows registry (catches newly installed tools without reboot)
-      const regKeys = [
-        'HKCU\\Environment',
-        'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment',
-      ];
-      for (const regKey of regKeys) {
-        try {
-          const regOut = execSync(`reg query "${regKey}" /v Path`, {
-            encoding: 'utf8',
-            windowsHide: true,
-            timeout: 2000,
-          });
-          const match = regOut.match(/Path\s+REG_[^\s]+\s+(.+)/i);
-          if (match?.[1]) {
-            for (const rawEntry of match[1].trim().split(';')) {
-              const expanded = expandWinEnv(rawEntry.trim());
-              if (expanded && !pathSet.has(normalize(expanded))) candidates.push(expanded);
-            }
-          }
-        } catch {}
-      }
+      // Fast synchronous fallback dirs; full Windows registry PATH sync runs asynchronously after port bind.
     } else {
       const home = process.env.HOME || '';
       candidates.push(
@@ -122,6 +102,61 @@ export function ensurePlatformPaths() {
 }
 
 ensurePlatformPaths();
+
+let winRegistrySyncPromise = null;
+
+/**
+ * Asynchronously merge User + Machine Windows Registry PATH entries without blocking startup.
+ */
+export function ensureWindowsRegistryPathsAsync() {
+  if (!IS_WIN) return Promise.resolve();
+  if (winRegistrySyncPromise) return winRegistrySyncPromise;
+
+  winRegistrySyncPromise = (async () => {
+    try {
+      const currentPath = process.env.PATH || '';
+      const paths = currentPath.split(path.delimiter).filter(Boolean);
+      const pathSet = new Set(paths.map((p) => p.toLowerCase()));
+      const regKeys = [
+        'HKCU\\Environment',
+        'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment',
+      ];
+
+      const outputs = await Promise.all(
+        regKeys.map((regKey) =>
+          execFileAsync('reg', ['query', regKey, '/v', 'Path'], {
+            encoding: 'utf8',
+            windowsHide: true,
+            timeout: 1500,
+          })
+            .then((res) => res.stdout || '')
+            .catch(() => '')
+        )
+      );
+
+      let added = false;
+      for (const regOut of outputs) {
+        const match = regOut.match(/Path\s+REG_[^\s]+\s+(.+)/i);
+        if (!match?.[1]) continue;
+        for (const rawEntry of match[1].trim().split(';')) {
+          const expanded = expandWinEnv(rawEntry.trim());
+          if (!expanded) continue;
+          const norm = expanded.toLowerCase();
+          if (!pathSet.has(norm) && fs.existsSync(expanded)) {
+            paths.push(expanded);
+            pathSet.add(norm);
+            added = true;
+          }
+        }
+      }
+      if (added) {
+        process.env.PATH = paths.join(path.delimiter);
+      }
+    } catch {}
+  })();
+
+  return winRegistrySyncPromise;
+}
 
 /**
  * Merge extra environment variables onto process.env without creating duplicate
@@ -338,6 +373,8 @@ export async function resolveBinaryPath(name) {
   if (!cleanName) return null;
   if (cleanName === 'node') return process.execPath;
 
+  await ensureWindowsRegistryPathsAsync();
+
   for (const candidate of getBinaryCandidates(cleanName)) {
     const resolved = findExecutableInPath(candidate);
     if (!resolved) continue;
@@ -368,6 +405,7 @@ export async function checkBinary(name, versionArgs = ['--version']) {
   }
 
   ensurePlatformPaths();
+  await ensureWindowsRegistryPathsAsync();
 
   const seenPaths = new Set();
   for (const bin of getBinaryCandidates(cleanName)) {
