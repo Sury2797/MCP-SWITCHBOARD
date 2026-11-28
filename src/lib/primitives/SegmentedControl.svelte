@@ -32,7 +32,7 @@
   }: Props = $props();
 
   let containerEl = $state<HTMLDivElement | null>(null);
-  let btnEls = $state<Record<string, HTMLButtonElement | null>>({});
+  const btnEls: Record<string, HTMLButtonElement | null> = {};
   let indicator = $state({ left: 0, width: 0, ready: false });
 
   function measure(): void {
