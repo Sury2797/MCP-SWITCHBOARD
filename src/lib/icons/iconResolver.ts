@@ -5,6 +5,7 @@ export interface ServerIconInput {
   command?: string | null;
   args?: string[] | string | null;
   url?: string | null;
+  env?: Record<string, string> | string | null;
 }
 
 export type IconMatchConfidence =
@@ -57,9 +58,11 @@ const GENERIC_RUNTIMES = new Set([
 
 const NOISE_TOKENS = new Set([
   'mcp',
+  'mcps',
   'server',
   'servers',
   'client',
+  'clients',
   'modelcontextprotocol',
   'official',
   'remote',
@@ -70,6 +73,9 @@ const NOISE_TOKENS = new Set([
   'https',
   'streamable',
   'api',
+  'key',
+  'token',
+  'secret',
   'app',
   'www',
   'com',
@@ -106,6 +112,11 @@ const NOISE_TOKENS = new Set([
   'rm',
   'i',
   'it',
+  'my',
+  'custom',
+  'tool',
+  'tools',
+  'helper',
 ]);
 
 // Extra semantic / package / product aliases mapped to canonical ICON_CATALOG slugs
@@ -152,28 +163,91 @@ const EXTRA_ALIASES: Record<string, string> = {
   llamaindex: 'sequential',
   'sequential-thinking': 'sequential',
   'knowledge-graph': 'sequential',
-  repomix: 'huggingface',
-  chembl: 'huggingface',
-  pdb: 'huggingface',
-  litert: 'huggingface',
-  alphagenome: 'gemini',
-  genomics: 'gemini',
-  '2d-assets': 'icons8',
-  textart: 'icons8',
-  beads: 'slack',
+  repomix: 'book',
+  chembl: 'science',
+  pdb: 'science',
+  litert: 'brain',
+  alphagenome: 'science',
+  genomics: 'science',
+  '2d-assets': 'image',
+  textart: 'image',
+  beads: 'task',
   teams: 'slack',
   opensearch: 'elasticsearch',
   kibana: 'elasticsearch',
   hcl: 'terraform',
   opentofu: 'terraform',
+  gitea: 'git',
+  circleci: 'rocket',
+  valkey: 'redis',
+  memgraph: 'neo4j',
+  openmeteo: 'weather',
+  openweathermap: 'weather',
+  yahoofinance: 'chart',
+  alphavantage: 'chart',
+  coingecko: 'chart',
+  binance: 'chart',
+  coinbase: 'chart',
+  wolframalpha: 'science',
+  semgrep: 'shield',
+  snyk: 'shield',
+  trivy: 'shield',
+  nmap: 'shield',
+  shodan: 'shield',
+  tailscale: 'network',
+  wireguard: 'network',
+  ngrok: 'network',
+  ffmpeg: 'video',
+  elevenlabs: 'audio',
+  deepl: 'translate',
+  duckduckgo: 'search',
+  searxng: 'search',
+  ticktick: 'task',
+  things3: 'task',
+  applemail: 'mail',
+  fastmail: 'mail',
+  markitdown: 'document',
+  pandoc: 'document',
+  pdfminer: 'document',
 };
 
 const CATEGORY_PATTERNS: Array<[RegExp, string]> = [
-  [/^(sql|database|db|warehouse|orm|query|analytics)$/i, 'database'],
-  [/^(filesystem|file|files|folder|dir|disk|storage|fs)$/i, 'filesystem'],
-  [/^(fetch|web|crawl|scrape|scraper|search|rss|url|curl)$/i, 'fetch'],
-  [/^(terminal|shell|bash|zsh|powershell|iterm|cli|console)$/i, 'terminal'],
-  [/^(sequential|thinking|memory|knowledge|brain|reason|context|workflow|agent|rag|vector|embed|embeddings)$/i, 'sequential'],
+  [/^(weather|forecast|meteo|climate|temp|temperature|rain|humidity|wind|airquality)$/i, 'weather'],
+  [/^(calendar|schedule|event|events|meeting|meetings|booking|caldav|ical|agenda)$/i, 'calendar'],
+  [/^(time|clock|timezone|worldclock|cron|timer|countdown|alarm|stopwatch|date)$/i, 'clock'],
+  [/^(chart|charts|analytics|metric|metrics|telemetry|finance|financial|stock|stocks|crypto|bitcoin|market|trading|revenue|bi|plot|graph|grafana-like)$/i, 'chart'],
+  [/^(doc|docs|document|documents|pdf|word|docx|markdown|md|note|notes|text|resume|contract|legal|ocr-doc|report)$/i, 'document'],
+  [/^(excel|xlsx|xls|csv|tsv|sheet|sheets|spreadsheet|spreadsheets|table|tables|dataframe|pandas)$/i, 'spreadsheet'],
+  [/^(slide|slides|ppt|pptx|powerpoint|presentation|deck|keynote)$/i, 'presentation'],
+  [/^(image|images|photo|photos|picture|pictures|ocr|screenshot|screenshots|canvas|draw|paint|pixel|svg|icon|icons|vision|flux|stable-diffusion)$/i, 'image'],
+  [/^(video|videos|media|ffmpeg|stream|movie|movies|clip|clips|camera|webcam|obs|recorder)$/i, 'video'],
+  [/^(audio|music|sound|tts|stt|speech|voice|podcast|podcasts|mic|microphone|radio|transcribe)$/i, 'audio'],
+  [/^(translate|translation|i18n|l10n|language|languages|locale|dictionary|thesaurus)$/i, 'translate'],
+  [/^(map|maps|geo|geolocation|location|gps|address|place|places|route|travel|flight|flights|hotel|uber|transit)$/i, 'map'],
+  [/^(security|sec|audit|vuln|vulnerability|scan|scanner|firewall|compliance|antivirus|malware|cve|pentest)$/i, 'shield'],
+  [/^(secret|secrets|keys|oauth|jwt|auth|authentication|ssh|gpg|credential|credentials|password|passwords|passkey|kms)$/i, 'key'],
+  [/^(cloud|storage|bucket|cdn|hosting|serverless|objectstore|vps|infra|infrastructure)$/i, 'cloud'],
+  [/^(network|net|proxy|tunnel|dns|ip|whois|webhook|webhooks|websocket|grpc|rest|vpn|socket|port)$/i, 'network'],
+  [/^(code|coding|ast|lint|linter|format|formatter|compiler|sdk|regex|diff|refactor|lsp|snippet|snippets|sandbox|eval)$/i, 'code'],
+  [/^(bug|bugs|debug|debugger|test|tests|testing|qa|crash|trace|monitor|monitoring|profiler|alert|alerts)$/i, 'bug'],
+  [/^(task|tasks|todo|todos|checklist|kanban|sprint|issue|issues|ticket|tickets|reminder|reminders|habit|habits)$/i, 'task'],
+  [/^(shop|store|ecommerce|cart|checkout|order|orders|invoice|invoices|billing|payment|payments|commerce|catalog)$/i, 'cart'],
+  [/^(mail|email|emails|smtp|imap|inbox|newsletter|outlook|proton|sendgrid|postmark)$/i, 'mail'],
+  [/^(chat|chats|message|messages|messaging|dm|bot|chatbot|support|helpdesk|crm|sms|social|forum)$/i, 'chat'],
+  [/^(brain|rag|vector|vectors|embedding|embeddings|llm|agent|agents|cognitive|neural|memory|mem|remember|recall)$/i, 'brain'],
+  [/^(science|bio|biology|chem|chemistry|math|mathematics|physics|calc|calculator|research|arxiv|pubmed|biorxiv|lab|molecule|protein|dna)$/i, 'science'],
+  [/^(search|find|grep|ripgrep|index|crawl|scrape|scraper|websearch|deepsearch|lookup)$/i, 'search'],
+  [/^(book|books|library|wiki|manual|glossary|handbook|knowledge|read|reader|reading|article|articles|news)$/i, 'book'],
+  [/^(rocket|deploy|deployment|release|cicd|ci|cd|workflow|workflows|pipeline|pipelines|automation|automate|launch)$/i, 'rocket'],
+  [/^(settings|setting|config|cfg|preferences|system|os|daemon|service|util|utils|utility|utilities|desktop|clipboard)$/i, 'settings'],
+  [/^(home|iot|smarthome|smart-home|sensor|sensors|device|devices|mqtt|zigbee|hue|thermostat|light|lights)$/i, 'home'],
+  [/^(archive|zip|tar|gzip|backup|backups|export|sync|snapshot|snapshots|compress|extract)$/i, 'archive'],
+  [/^(json|yaml|yml|toml|xml|schema|jq|yq)$/i, 'json'],
+  [/^(sql|database|db|warehouse|orm|query|sqlite-like)$/i, 'database'],
+  [/^(filesystem|file|files|folder|folders|dir|directory|disk|fs|fd|tree)$/i, 'filesystem'],
+  [/^(fetch|web|url|curl|browser-fetch|rss)$/i, 'fetch'],
+  [/^(terminal|shell|bash|zsh|powershell|iterm|cli|console|tty|pty)$/i, 'terminal'],
+  [/^(sequential|thinking|reason|reasoning|planner|planning|chain)$/i, 'sequential'],
 ];
 
 // Build fast lookup tables once at module load
@@ -202,8 +276,6 @@ for (const [alias, slug] of Object.entries(EXTRA_ALIASES)) {
   }
 }
 
-// Sort keys for deterministic compound and streaming prefix resolution:
-// canonical first, then shorter keys, then alphabetical
 ALL_KEYS.sort((a, b) => {
   if (a.isCanonical !== b.isCanonical) return a.isCanonical ? -1 : 1;
   if (a.key.length !== b.key.length) return a.key.length - b.key.length;
@@ -227,6 +299,22 @@ function extractHyphenCompounds(raw: string): string[] {
   if (!raw) return [];
   const matches = raw.toLowerCase().match(/[a-z0-9]+(?:-[a-z0-9]+)+/g);
   return matches ? matches : [];
+}
+
+function stemCandidates(token: string): string[] {
+  const out = [token];
+  if (token.length > 4 && token.endsWith('ies')) {
+    out.push(`${token.slice(0, -3)}y`);
+  } else if (token.length > 4 && token.endsWith('es')) {
+    out.push(token.slice(0, -2));
+  } else if (token.length > 3 && token.endsWith('s') && !token.endsWith('ss')) {
+    out.push(token.slice(0, -1));
+  }
+  if (token.length > 5 && token.endsWith('ing')) {
+    out.push(token.slice(0, -3));
+    out.push(`${token.slice(0, -3)}e`);
+  }
+  return out;
 }
 
 interface WeightedToken {
@@ -299,7 +387,7 @@ function extractTokens(input: ServerIconInput): WeightedToken[] {
     }
   }
 
-  // 4. Command (only if not a generic runtime launcher like npx/uvx/node/python/docker)
+  // 4. Command (if not a generic runtime launcher like npx/uvx/node/python/docker)
   const cmd = (input.command || '').trim();
   if (cmd) {
     const baseCmd = cmd.split(/[\\/]/).pop()?.toLowerCase().replace(/\.(exe|cmd|bat|sh)$/i, '') || '';
@@ -312,6 +400,16 @@ function extractTokens(input: ServerIconInput): WeightedToken[] {
           push(t, 50, false);
         }
       }
+    }
+  }
+
+  // 5. Env var keys (e.g. GITHUB_TOKEN, BRAVE_API_KEY, STRIPE_SECRET)
+  if (input.env) {
+    const envText = typeof input.env === 'string'
+      ? input.env
+      : Object.keys(input.env).join(' ');
+    for (const t of splitCamelAndSeparators(envText)) {
+      push(t, 40, false);
     }
   }
 
@@ -338,18 +436,20 @@ export function resolveServerIcon(input: ServerIconInput): ResolvedServerIcon {
   const tokens = extractTokens(input);
 
   if (tokens.length > 0) {
-    // Tier 1 & 2: Exact canonical slug or alias match
+    // Tier 1 & 2: Exact canonical slug, stemmed slug, or alias match
     for (const { token } of tokens) {
-      if (ICON_CATALOG[token]) {
-        return buildResult(token, ICON_CATALOG[token], 'exact');
-      }
-      const mapped = ALIAS_TO_SLUG.get(token);
-      if (mapped && ICON_CATALOG[mapped]) {
-        return buildResult(mapped, ICON_CATALOG[mapped], 'alias');
+      for (const candidate of stemCandidates(token)) {
+        if (ICON_CATALOG[candidate]) {
+          return buildResult(candidate, ICON_CATALOG[candidate], 'exact');
+        }
+        const mapped = ALIAS_TO_SLUG.get(candidate);
+        if (mapped && ICON_CATALOG[mapped]) {
+          return buildResult(mapped, ICON_CATALOG[mapped], 'alias');
+        }
       }
     }
 
-    // Tier 3: Embedded / concatenated brand match (e.g. "myatlassian", "githubmcp", "stripebilling")
+    // Tier 3: Embedded / concatenated brand or domain match (e.g. "myweather", "githubmcp", "stripebilling")
     for (const { token } of tokens) {
       if (token.length < 5) continue;
       for (const { key, slug } of COMPOUND_KEYS) {
@@ -359,9 +459,16 @@ export function resolveServerIcon(input: ServerIconInput): ResolvedServerIcon {
       }
     }
 
-    // Tier 4: Real-time streaming prefix match while typing (e.g. "atl" -> "atlassian", "gith" -> "github")
+    // Tier 4: Real-time streaming prefix match while typing (e.g. "wea" -> "weather", "gith" -> "github")
     for (const { token, allowStreaming } of tokens) {
-      if (!allowStreaming || token.length < 3) continue;
+      if (!allowStreaming || token.length < 2) continue;
+      if (token.length === 2) {
+        const canonicalExact = ALL_KEYS.find((k) => k.isCanonical && k.key.startsWith(token));
+        if (canonicalExact && ICON_CATALOG[canonicalExact.slug]) {
+          return buildResult(canonicalExact.slug, ICON_CATALOG[canonicalExact.slug], 'streaming');
+        }
+        continue;
+      }
       for (const { key, slug } of ALL_KEYS) {
         if (key.startsWith(token) && ICON_CATALOG[slug]) {
           return buildResult(slug, ICON_CATALOG[slug], 'streaming');
@@ -369,22 +476,24 @@ export function resolveServerIcon(input: ServerIconInput): ResolvedServerIcon {
       }
     }
 
-    // Tier 5: Semantic category fallback
+    // Tier 5: Morphological + semantic category classifier (covers 35+ colored SVG domains)
     for (const { token } of tokens) {
-      for (const [pattern, slug] of CATEGORY_PATTERNS) {
-        if (pattern.test(token) && ICON_CATALOG[slug]) {
-          return buildResult(slug, ICON_CATALOG[slug], 'category');
+      for (const candidate of stemCandidates(token)) {
+        for (const [pattern, slug] of CATEGORY_PATTERNS) {
+          if (pattern.test(candidate) && ICON_CATALOG[slug]) {
+            return buildResult(slug, ICON_CATALOG[slug], 'category');
+          }
         }
       }
     }
   }
 
-  // Tier 6: Universal default fallback (unchanged)
+  // Tier 6: Universal colored SVG fallback (never PNG)
   return {
     id: 'fallback',
-    file: 'server.png',
-    src: '/icons/servers/server.png',
-    monoDark: true,
+    file: 'server.svg',
+    src: '/icons/servers/server.svg',
+    monoDark: false,
     confidence: 'fallback',
   };
 }
