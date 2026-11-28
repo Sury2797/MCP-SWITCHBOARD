@@ -246,7 +246,7 @@
                         ? 'border-rose-500/35 bg-rose-500/[0.08] text-rose-600 dark:text-rose-400'
                         : 'border-graphite-200/80 dark:border-white/[0.09] bg-graphite-100/70 dark:bg-white/[0.05] text-graphite-600 dark:text-graphite-300'}"
                 >
-                  <ServerIcon name={server.name} command={server.command} url={server.url} size={20} />
+                  <ServerIcon name={server.name} command={server.command} args={server.args} url={server.url} size={20} />
                 </div>
               </div>
 
