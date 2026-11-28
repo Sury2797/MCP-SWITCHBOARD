@@ -4,23 +4,32 @@ import type { TransitionConfig } from 'svelte/transition';
 export const BACKDROP_FADE = { duration: 160 } as const;
 export const STEP_SLIDE = { y: 10, duration: 240, easing: cubicOut } as const;
 export const SLIDING_PILL_TRANSITION =
-  'transform 340ms var(--ease-glide), width 280ms var(--ease-out-expo)';
+  'transform 340ms var(--ease-glide), width 280ms var(--ease-out-expo), height 280ms var(--ease-out-expo)';
 
 export interface SlidingIndicatorBounds {
   left: number;
+  top: number;
   width: number;
+  height: number;
 }
 
 /**
- * Measure layout offset/width relative to an offsetParent without transform-scale distortion.
+ * Measure layout offset/size relative to an offsetParent without transform-scale distortion.
  */
 export function measureSlidingPill(activeEl: HTMLElement | null): SlidingIndicatorBounds | null {
   if (!activeEl || activeEl.offsetWidth <= 0) return null;
-  return { left: activeEl.offsetLeft, width: activeEl.offsetWidth };
+  return {
+    left: activeEl.offsetLeft,
+    top: activeEl.offsetTop,
+    width: activeEl.offsetWidth,
+    height: activeEl.offsetHeight,
+  };
 }
 
-export function slidingPillStyle(bounds: SlidingIndicatorBounds): string {
-  return `width: ${bounds.width}px; transform: translate3d(${bounds.left}px, 0, 0); transition: ${SLIDING_PILL_TRANSITION}; will-change: transform, width;`;
+export function slidingPillStyle(bounds: SlidingIndicatorBounds, use2D = false): string {
+  const y = use2D ? bounds.top : 0;
+  const h = use2D ? `height: ${bounds.height}px; ` : '';
+  return `width: ${bounds.width}px; ${h}transform: translate3d(${bounds.left}px, ${y}px, 0); transition: ${SLIDING_PILL_TRANSITION}; will-change: transform, width${use2D ? ', height' : ''};`;
 }
 
 export interface GlassModalParams {
