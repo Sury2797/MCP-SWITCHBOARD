@@ -6,6 +6,7 @@
   import Button from '../lib/primitives/Button.svelte';
   import SegmentedControl from '../lib/primitives/SegmentedControl.svelte';
   import CountUp from '../lib/primitives/CountUp.svelte';
+  import { detectPlatform, getPlatformConfigPathsHint, isMacPlatform } from '../lib/platform';
   import type { McpServerSnapshot } from '../lib/types';
 
   interface Props {
@@ -43,8 +44,9 @@
     clearTimeout(copyTimer);
   });
 
-  const isMac =
-    typeof navigator !== 'undefined' && /mac/i.test(navigator.platform || navigator.userAgent);
+  const currentPlatform = detectPlatform();
+  const isMac = isMacPlatform(currentPlatform);
+  const configPathsHint = getPlatformConfigPathsHint(currentPlatform);
 
   function handleSearchKey(e: KeyboardEvent): void {
     if (e.key === 'Escape') {
@@ -177,7 +179,7 @@
         Paste any MCP config snippet from Antigravity, Claude Desktop, Cursor, VS Code, Windsurf, or Zed to register local STDIO or remote HTTP/SSE servers in one click.
       </p>
       <p class="font-mono text-[10.5px] text-graphite-500 dark:text-graphite-400 max-w-lg mx-auto">
-        %APPDATA%\Claude · ~/Library/Application Support/Claude · ~/.config/zed · ~/.cursor/mcp.json
+        {configPathsHint}
       </p>
       <div class="pt-2">
         <Button variant="primary" size="sm" onclick={onAdd}>
@@ -246,7 +248,7 @@
                         ? 'border-rose-500/35 bg-rose-500/[0.08] text-rose-600 dark:text-rose-400'
                         : 'border-graphite-200/80 dark:border-white/[0.09] bg-graphite-100/70 dark:bg-white/[0.05] text-graphite-600 dark:text-graphite-300'}"
                 >
-                  <ServerIcon name={server.name} command={server.command} args={server.args} url={server.url} size={20} />
+                  <ServerIcon name={server.name} command={server.command} args={server.args} url={server.url} env={server.env} size={20} />
                 </div>
               </div>
 
