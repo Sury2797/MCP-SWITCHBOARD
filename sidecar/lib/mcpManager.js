@@ -451,6 +451,9 @@ export class McpManager extends EventEmitter {
       const resolvedExecutable = isPath
         ? findExecutableInPath(resolvedCommand, config.cwd || null)
         : await resolveBinaryPath(resolvedCommand);
+      if (rt.stopping) {
+        return;
+      }
       if (!resolvedExecutable) {
         const msg = isPath
           ? `Executable "${resolvedCommand}" was not found.`
