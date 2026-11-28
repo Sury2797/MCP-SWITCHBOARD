@@ -3,6 +3,7 @@
   import StreamlineIcon from '../lib/icons/StreamlineIcon.svelte';
   import Switch from '../lib/primitives/Switch.svelte';
   import Button from '../lib/primitives/Button.svelte';
+  import ThemeToggleButton from '../lib/primitives/ThemeToggleButton.svelte';
   import { magnet } from '../lib/primitives/magnet';
   import type { ThemeMode, TunnelState } from '../lib/types';
 
@@ -12,7 +13,7 @@
     theme?: ThemeMode;
     tunnelBusy?: boolean;
     onToggleTunnel?: (enable: boolean) => void;
-    onToggleTheme?: () => void;
+    onToggleTheme?: (event: MouseEvent) => void;
     onOpenSettings?: () => void;
     onOpenHelp?: () => void;
     onNotify?: (message: string, type?: 'info' | 'error') => void;
@@ -107,7 +108,7 @@
           alt="MCP Switchboard"
           width="32"
           height="32"
-          class="board-sm h-7 w-7 sm:h-8 sm:w-8 rounded-lg shrink-0 select-none ring-1 ring-black/[0.08] dark:ring-white/[0.12]"
+          class="h-7 w-7 sm:h-8 sm:w-8 shrink-0 select-none drop-shadow-xs"
         />
         <div class="min-w-0">
           <h1 class="text-sm sm:text-[15px] font-semibold tracking-[-0.015em] leading-none text-graphite-950 dark:text-graphite-50 truncate">
@@ -147,16 +148,7 @@
 
         <!-- Clean Light/Dark-Safe Utility Buttons -->
         <div class="flex items-center gap-1 sm:gap-1.5">
-          <Button
-            variant="secondary"
-            size="sm"
-            iconOnly
-            onclick={onToggleTheme}
-            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            aria-label="Toggle color theme"
-          >
-            <StreamlineIcon name={theme === 'dark' ? 'Sun' : 'Moon'} size={14} />
-          </Button>
+          <ThemeToggleButton {theme} size="sm" onclick={onToggleTheme} />
 
           <Button
             variant="secondary"
