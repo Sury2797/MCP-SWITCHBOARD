@@ -2,6 +2,7 @@
   interface Props {
     checked?: boolean;
     starting?: boolean;
+    disconnecting?: boolean;
     error?: boolean;
     disabled?: boolean;
     size?: 'sm' | 'md';
@@ -13,11 +14,12 @@
   /**
    * BoardUI-inspired precision tactile switch.
    * Status switches reflect live connection telemetry (emerald connected, amber starting,
-   * muted rose error, matte neutral disconnected).
+   * cool slate disconnecting, muted rose error, matte neutral disconnected).
    */
   let {
     checked = false,
     starting = false,
+    disconnecting = false,
     error = false,
     disabled = false,
     size = 'sm',
@@ -28,14 +30,18 @@
 
   const isStatus = $derived(tone === 'status');
   const isMd = $derived(size === 'md');
+  const isTransitioning = $derived(starting || disconnecting);
 
   const thumbOffsetPx = $derived.by(() => {
-    if (starting) return isMd ? 10 : 8;
+    if (isTransitioning) return isMd ? 10 : 8;
     if (checked) return isMd ? 20 : 16;
     return 0;
   });
 
   const trackClass = $derived.by(() => {
+    if (disconnecting) {
+      return 'border-slate-400/80 bg-slate-400/85 dark:border-slate-500/80 dark:bg-slate-600/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_0_0_2px_rgba(148,163,184,0.16)]';
+    }
     if (starting) {
       return isStatus
         ? 'border-amber-500/85 bg-amber-500/90 dark:border-amber-400/85 dark:bg-amber-400/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_0_0_2px_rgba(245,158,11,0.16)]'
@@ -53,20 +59,20 @@
   });
 
   const thumbColorClass = $derived.by(() => {
-    if (!isStatus && checked && !starting) {
+    if (!isStatus && checked && !isTransitioning) {
       return 'bg-white dark:bg-graphite-950';
     }
-    if (isStatus && (checked || starting)) {
+    if (isStatus && (checked || isTransitioning)) {
       return 'bg-white';
     }
     return 'bg-white dark:bg-graphite-200';
   });
 
   const detentClass = $derived.by(() => {
-    if (checked && !starting) {
+    if (checked && !isTransitioning) {
       return isStatus ? 'bg-emerald-600 dark:bg-emerald-500' : 'bg-graphite-950 dark:bg-graphite-100';
     }
-    if (isStatus && error && !starting) {
+    if (isStatus && error && !isTransitioning) {
       return 'bg-rose-500';
     }
     return 'bg-graphite-300 dark:bg-graphite-500';
@@ -84,7 +90,13 @@
     ? 'h-6 w-11 p-[2px]'
     : 'h-5 w-9 p-[2px]'} {trackClass}"
 >
-  {#if starting}
+  {#if disconnecting}
+    <span
+      aria-hidden="true"
+      style="--disconnect-shimmer: rgba(255, 255, 255, 0.3);"
+      class="disconnect-shimmer pointer-events-none absolute inset-0 rounded-full"
+    ></span>
+  {:else if starting}
     <span
       aria-hidden="true"
       style="--connect-shimmer: rgba(255, 255, 255, 0.32);"
@@ -97,11 +109,13 @@
       ? 'h-[18px] w-[18px]'
       : 'h-3.5 w-3.5'} {thumbColorClass}"
   >
-    {#if starting && isStatus}
+    {#if (starting || disconnecting) && isStatus}
       <svg
         aria-hidden="true"
         viewBox="0 0 12 12"
-        class="connect-arc-spin text-amber-600 dark:text-amber-500 {isMd ? 'h-3 w-3' : 'h-2.5 w-2.5'}"
+        class="connect-arc-spin {disconnecting
+          ? 'text-slate-600 dark:text-slate-500'
+          : 'text-amber-600 dark:text-amber-500'} {isMd ? 'h-3 w-3' : 'h-2.5 w-2.5'}"
         fill="none"
       >
         <circle cx="6" cy="6" r="4.2" stroke="currentColor" stroke-opacity="0.24" stroke-width="1.8" />
